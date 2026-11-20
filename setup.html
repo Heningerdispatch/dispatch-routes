@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dispatch Routes – Setup</title>
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top"><div class="row"><h1>Dispatch Routes – one-time setup</h1></div></header>
+<main class="wrap">
+  <div class="card" id="step1">
+    <h2>Step 1 · Create the owner’s office login</h2>
+    <p>This is the login you’ll use on the office dashboard. Use an email the business controls and a strong password.</p>
+    <label class="f" for="em">Email</label><input id="em" type="email" autocomplete="username">
+    <label class="f" for="pw">Password (at least 8 characters)</label><input id="pw" type="password" autocomplete="new-password">
+    <div class="err" id="err"></div>
+    <div class="row"><button class="btn primary" id="create" type="button">Create owner login</button><button class="btn" id="signin" type="button">I already made it: sign in</button></div>
+  </div>
+  <div class="card" id="step2" hidden>
+    <h2>Step 2 · Publish the security rules</h2>
+    <p>Signed in as <b id="who"></b>. Your login ID is <code id="uid"></code>.</p>
+    <ol>
+      <li>Click <b>Copy rules</b> below.</li>
+      <li>In the Firebase console, open <b>Firestore</b>, then the <b>Rules</b> tab.</li>
+      <li>Select everything in the editor, paste over it, then click <b>Publish</b>.</li>
+    </ol>
+    <p><button class="btn primary" id="copy" type="button">Copy rules</button> <span id="copied" class="muted"></span></p>
+    <textarea id="rules" rows="14" readonly style="font-family:ui-monospace,monospace;font-size:.78rem"></textarea>
+  </div>
+  <div class="card" id="step3" hidden>
+    <h2>Step 3 · Finish on the office dashboard</h2>
+    <p>Once the rules are published, open the <a href="admin.html">office dashboard</a>. It asks you to finish setup once, then you can import the starting data on the <b>Import &amp; backup</b> tab.</p>
+  </div>
+</main>
+<script type="module">
+import { backend } from './backend.js';
+import { $, errText } from './common.js';
+let rulesText = '';
+try { rulesText = await (await fetch('firestore.rules', { cache: 'no-store' })).text(); } catch (e) {}
+backend.onAuth(u => {
+  $('#step2').hidden = $('#step3').hidden = !u; $('#step1').hidden = !!u;
+  if (!u) return;
+  $('#who').textContent = u.email || ''; $('#uid').textContent = u.uid;
+  $('#rules').value = rulesText.replace('REPLACE_WITH_OWNER_UID', u.uid);
+});
+$('#create').onclick = async () => {
+  const em = $('#em').value.trim(), pw = $('#pw').value;
+  if (pw.length < 8) return $('#err').textContent = 'Use at least 8 characters for the password.';
+  try { await backend.createOwnLogin(em, pw); } catch (e) { $('#err').textContent = errText(e); }
+};
+$('#signin').onclick = async () => { try { await backend.signIn($('#em').value.trim(), $('#pw').value); } catch (e) { $('#err').textContent = errText(e).replace('name and PIN', 'email and password'); } };
+$('#copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('#rules').value); $('#copied').textContent = 'Copied.'; }
+  catch (e) { $('#rules').select(); document.execCommand('copy'); $('#copied').textContent = 'Copied.'; }
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Dispatch Routes</title>
+<meta name="theme-color" content="#1f2a36">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Routes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top"><div class="row">
+  <h1 id="title">Dispatch Routes</h1>
+  <span class="net" id="net" hidden><i></i><span>Online</span></span>
+  <button type="button" id="menuBtn" hidden aria-haspopup="true">Menu</button>
+</div></header>
+<main id="app" class="wrap"><p class="muted" style="margin-top:30px">Loading…</p></main>
+<dialog id="menu"><div class="dh">Menu</div><div class="db" id="menuBody"></div><div class="df"><button class="btn" type="button" id="menuClose">Close</button></div></dialog>
+<script type="module" src="crew.js"></script>
+</body>
+</html>
