@@ -213,7 +213,8 @@ function events(p) {
   const run = running(), busy = {};
   for (const e of run) for (const r of evRoutes(e)) busy[r.id] = e;
   const def = 'Snow event – ' + day(Date.now()) + ' ' + t12(Date.now());
-  const plans = ['plow', 'drivelanes', 'sidewalk', 'day'].map(pl => [pl, S.routes.filter(r => r.plan === pl && !r.archived)]).filter(x => x[1].length);
+  const plans = ['plow', 'drivelanes', 'sidewalk', 'day'].map(pl => [pl, S.routes.filter(r => r.plan === pl && !r.archived && !r.hidden)]).filter(x => x[1].length);
+  const hiddenN = S.routes.filter(r => !r.archived && r.hidden).length;
   p.innerHTML = `${run.length ? `<h2>Running now</h2>${run.map(e => `<div class="card"><div class="row" style="justify-content:space-between"><div><b>${esc(e.name)}</b>
         <div class="muted small">Started ${esc(dayTime(e.startMs))} · ${evRoutes(e).map(r => esc(r.label)).join(', ')}</div></div>
         <button class="btn danger" data-end="${e.id}" type="button">End this snow event</button></div></div>`).join('')}
@@ -224,7 +225,7 @@ function events(p) {
       ${plans.map(([pl, rs]) => `<h3 class="row" style="justify-content:space-between">${esc(PLANS[pl].label)} <button class="link" data-all="${pl}" type="button">Select all</button></h3>
         <div class="checks">${rs.map(r => `<label style="${busy[r.id] ? 'opacity:.55' : ''}"><input type="checkbox" data-plan="${pl}" value="${r.id}" ${busy[r.id] ? 'disabled' : ''}>
           ${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}${busy[r.id] ? ` <span class="small muted">(in ${esc(busy[r.id].name)})</span>` : ''}</label>`).join('')}</div>`).join('')}
-      <p class="small muted">Full plow routes and drive lane routes use the same machines, so usually tick one or the other.</p>
+      <p class="small muted">Full plow routes and drive lane routes use the same machines, so usually tick one or the other.${hiddenN ? ` ${hiddenN} hidden route${hiddenN > 1 ? 's aren’t' : ' isn’t'} listed; show ${hiddenN > 1 ? 'them' : 'it'} on Routes &amp; sites.` : ''}</p>
       <div class="err" id="everr"></div>
       <button class="btn go" id="startEv" type="button">Start snow event</button></div>
     <h2>Past snow events</h2>
@@ -310,12 +311,12 @@ function routeOverviewCard(r) {
   const lo = stops.reduce((a, s) => a + (s.lo || 0), 0), hi = stops.reduce((a, s) => a + (s.hi ?? s.lo ?? 0), 0);
   const noHrs = stops.filter(s => s.lo == null).length, est = stops.filter(s => s.site.pinExact === false).length, dl = stops.filter(s => s.site.deadline).length;
   const crew = (r.members || []).map(pname).join(', ');
-  return `<div class="rcard" style="--c:${esc(r.color || '#1d5fa8')}"><div class="row" style="justify-content:space-between"><h3>${esc(r.label)}</h3><b>${stops.length} stops</b></div>
+  return `<div class="rcard" style="--c:${esc(r.color || '#1d5fa8')};${r.hidden ? 'opacity:.6' : ''}"><div class="row" style="justify-content:space-between"><h3>${esc(r.label)}${r.hidden ? ' <span class="flag amber">Hidden</span>' : ''}</h3><b>${stops.length} stops</b></div>
     <div class="crew">${crew ? esc(crew) : `<span class="muted">${esc(r.crewLabel || 'No usual crew set')}</span>`}${r.machine ? ` <span class="muted">· ${esc(r.machine)}</span>` : ''}</div>
     <div class="small muted" style="margin-top:4px">${esc(r.area || '')}</div>
     ${r.plan !== 'drivelanes' && lo ? `<div class="small" style="margin-top:4px">Planned: <b>${lo === hi ? lo : lo + '–' + hi} hrs</b> on site</div>` : ''}
     <div>${dl ? `<span class="flag red">${dl} deadline${dl > 1 ? 's' : ''}</span>` : ''}${est ? `<span class="flag amber">${est} pin${est > 1 ? 's' : ''} estimated</span>` : ''}${r.plan !== 'drivelanes' && noHrs ? `<span class="flag amber">${noHrs} without hours</span>` : ''}</div>
-    <p style="margin:8px 0 0"><button class="btn sm" type="button" data-open="${esc(r.id)}">Open route</button></p></div>`;
+    <p class="row" style="margin:8px 0 0"><button class="btn sm" type="button" data-open="${esc(r.id)}">Open route</button><button class="btn sm" type="button" data-hide="${esc(r.id)}">${r.hidden ? 'Show to crews' : 'Hide'}</button></p></div>`;
 }
 function routesTab(p) {
   const r = rsRoute ? S.routes.find(x => x.id === rsRoute && !x.archived) : null;
@@ -329,13 +330,23 @@ function routesTab(p) {
           <div class="row">${S.routes.filter(x => !x.archived && (x.stops || []).some(y => y.siteId === s.id)).map(x => `<button class="btn sm" data-open="${esc(x.id)}" type="button" style="border-color:${esc(x.color || '#1d5fa8')}">${esc(PLANS[x.plan].short)} · ${esc(x.label)}</button>`).join('') || '<span class="small muted">Not on any route</span>'}</div></div>`).join('') || '<p class="small muted">No sites match.</p>') : ''}</div></div>` +
       ['plow', 'drivelanes', 'sidewalk', 'day'].map(pl => {
         const list = S.routes.filter(x => x.plan === pl && !x.archived);
-        return `<div class="row" style="justify-content:space-between;margin-top:14px"><h2 style="margin:0">${esc(PLANS[pl].label)}</h2><button class="btn sm" data-new="${pl}" type="button">+ New route</button></div>
+        const allHidden = list.length && list.every(x => x.hidden);
+        return `<div class="row" style="justify-content:space-between;margin-top:14px"><h2 style="margin:0">${esc(PLANS[pl].label)}${allHidden ? ' <span class="flag amber">Hidden from crews</span>' : ''}</h2>
+          <div class="row">${list.length ? `<button class="btn sm" data-hideall="${pl}" data-to="${allHidden ? 'show' : 'hide'}" type="button">${allHidden ? 'Show all' : 'Hide all'}</button>` : ''}<button class="btn sm" data-new="${pl}" type="button">+ New route</button></div></div>
           <div class="grid" style="margin-top:8px">${list.map(routeOverviewCard).join('') || '<p class="muted">No routes yet.</p>'}</div>`;
       }).join('');
     const f = $('#rsFind');
     f.oninput = () => { rsFind = f.value; const pos = f.selectionStart; drawNowForce(); const g = $('#rsFind'); if (g) { g.focus(); g.setSelectionRange(pos, pos); } };
     $$('[data-open]', p).forEach(b => b.onclick = () => { rsRoute = b.dataset.open; lsSet('dr-rs-route', rsRoute); window.scrollTo(0, 0); drawNow(); });
     $$('[data-new]', p).forEach(b => b.onclick = () => { rsPlan = b.dataset.new; lsSet('dr-rs-plan', rsPlan); routeForm(null); });
+    const busy = new Set(running().flatMap(e => evRoutes(e).map(x => x.id)));
+    const setHidden = async (ids, hide) => {
+      if (hide && ids.some(id => busy.has(id))) return toast('A route in a running snow event can’t be hidden. End that event first.', 'bad');
+      try { await backend.batch(ids.map(id => ({ op: 'update', path: 'routes/' + id, data: { hidden: hide } }))); toast(hide ? 'Hidden from crews' : 'Showing to crews'); } catch (e) { toast(errText(e), 'bad'); }
+    };
+    $$('[data-hide]', p).forEach(b => b.onclick = () => { const x = S.routes.find(y => y.id === b.dataset.hide); setHidden([x.id], !x.hidden); });
+    $$('[data-hideall]', p).forEach(b => twoTap(b, b.dataset.to === 'hide' ? 'Tap again to hide all' : 'Tap again to show all', () =>
+      setHidden(S.routes.filter(x => x.plan === b.dataset.hideall && !x.archived).map(x => x.id), b.dataset.to === 'hide')));
     return;
   }
   rsPlan = r.plan;

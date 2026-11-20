@@ -122,7 +122,7 @@ function netBadge() {
 
 const myId = () => S.ident && S.ident.personId;
 const personName = id => (S.people.find(p => p.id === id) || {}).name || 'Someone';
-const evRoutes = ev => !ev ? [] : S.routes.filter(r => !r.archived && (ev.routes ? ev.routes.includes(r.id) : [ev.plowPlan || 'plow', 'sidewalk', 'day'].includes(r.plan)));
+const evRoutes = ev => !ev ? [] : S.routes.filter(r => !r.archived && !r.hidden && (ev.routes ? ev.routes.includes(r.id) : [ev.plowPlan || 'plow', 'sidewalk', 'day'].includes(r.plan)));
 
 /* ---------- Screens ---------- */
 function render() {
