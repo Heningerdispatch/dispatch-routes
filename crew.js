@@ -146,7 +146,14 @@ function render() {
 function showPick() {
   $('#title').textContent = 'Pick your route';
   const me = myId();
-  app.innerHTML = `<h2>Which route are you on?</h2><p class="muted small">Your usual route is outlined.</p>` + S.active.map(ev => {
+  // Their usual route(s) in the running snow events, shown first so nobody has to remember.
+  const usual = S.active.flatMap(ev => evRoutes(ev).filter(r => (r.members || []).includes(me)).map(r => ({ ev, r })));
+  const usualHTML = usual.length
+    ? `<div class="banner info" style="margin-top:6px"><div>Your usual route${usual.length > 1 ? 's' : ''}:</div><div class="pick" style="margin-top:8px">${usual.map(({ ev, r }) =>
+        `<button type="button" data-e="${esc(ev.id)}" data-r="${esc(r.id)}" class="mine" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(ev.name || '')} · ${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`).join('')}</div>
+        <div class="small muted" style="margin-top:6px">Tap it to start, or pick a different route below if the office moved you tonight.</div></div>`
+    : `<div class="banner info" style="margin-top:6px">You don’t have a usual route in tonight’s snow event${S.active.length > 1 ? 's' : ''}. Check with the office which route you’re on, then pick it below.</div>`;
+  app.innerHTML = `<h2>Which route are you on?</h2>${usualHTML}<h3 style="margin-top:18px">All routes running now</h3>` + S.active.map(ev => {
     const rs = evRoutes(ev);
     const groups = ['plow', 'drivelanes', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
     return `<div class="card" style="padding:10px 12px"><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2><div class="muted small">Started ${esc(dayTime(ev.startMs))}</div>` +
@@ -163,7 +170,13 @@ function showCrew() {
   app.innerHTML = `<h2>Who’s with you tonight?</h2><p class="muted small">${esc(r.label)}. Untick anyone who isn’t here and tick anyone filling in.</p>
     <div class="checks">${ppl.map(p => `<label><input type="checkbox" value="${esc(p.id)}" ${pre.has(p.id) ? 'checked' : ''} ${p.id === me ? 'disabled' : ''}>${esc(p.name)}${p.id === me ? ' (you)' : ''}</label>`).join('')}</div>
     <p><button class="btn primary full" id="crewGo" type="button">Start route</button></p><p><button class="link" id="back" type="button">Pick a different route</button></p>`;
-  $('#crewGo').onclick = () => { const ids = [me, ...$$('.checks input:checked').map(i => i.value).filter(v => v !== me)]; lsSet(crewKey(), ids); render(); };
+  $('#crewGo').onclick = () => {
+    const ids = [me, ...$$('.checks input:checked').map(i => i.value).filter(v => v !== me)];
+    lsSet(crewKey(), ids);
+    // Tell the office who's out on this route tonight (shows on the dashboard before the first site).
+    save(backend.set(`crews/${S.event.id}__${r.id}`, { eventId: S.event.id, routeId: r.id, crew: ids, by: me, at: Date.now() }));
+    render();
+  };
   $('#back').onclick = () => { lsSet(PICK, null); render(); };
 }
 

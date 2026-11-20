@@ -6,7 +6,7 @@ import {
 } from './common.js';
 
 const app = $('#app');
-const S = { user: null, ident: null, me: null, events: [], viewEventId: null, repEventId: null, routes: [], sites: {}, people: [], visitsBy: {}, watchers: {}, tab: lsGet('dr-admin-tab', 'dash'), unsubs: [] };
+const S = { user: null, ident: null, me: null, events: [], viewEventId: null, repEventId: null, routes: [], sites: {}, people: [], visitsBy: {}, crewsBy: {}, watchers: {}, tab: lsGet('dr-admin-tab', 'dash'), unsubs: [] };
 const OPEN_FLAG_MS = 3 * 3600e3, SHORT_MS = 5 * 60e3, FAR_M = 400;
 
 function clear() { S.unsubs.forEach(u => { try { u(); } catch (e) {} }); S.unsubs = []; Object.values(S.watchers).forEach(u => { try { u(); } catch (e) {} }); S.watchers = {}; S.visitsBy = {}; }
@@ -76,6 +76,7 @@ const running = () => S.events.filter(e => e.active === true).sort((a, b) => (a.
 function ensureVisits(eid) {
   if (!eid || S.watchers[eid]) return;
   S.watchers[eid] = backend.watchList('visits', [['eventId', '==', eid]], vs => { S.visitsBy[eid] = vs; if (S.tab === 'dash' || S.tab === 'reports') draw(); });
+  S.watchers[eid + '-crews'] = backend.watchList('crews', [['eventId', '==', eid]], cs => { S.crewsBy[eid] = Object.fromEntries(cs.map(c => [c.routeId, c])); if (S.tab === 'dash') draw(); });
 }
 const visitsOf = eid => S.visitsBy[eid] || [];
 const pname = id => (S.people.find(p => p.id === id) || {}).name || id || '';
@@ -89,6 +90,7 @@ const fileSafe = t => String(t).replace(/[\\/:*?"<>|]/g, '-');
 const TABS = [['dash', 'Live dashboard'], ['events', 'Snow events'], ['reports', 'Reports'], ['routes', 'Routes & sites'], ['people', 'People & PINs'], ['data', 'Import & backup']];
 let drawQueued = false;
 function draw() { if (drawQueued) return; drawQueued = true; requestAnimationFrame(() => { drawQueued = false; drawNow(); }); }
+function drawNowForce() { const ae = document.activeElement; if (ae && ae.blur) ae.blur(); drawNow(); }
 function drawNow() {
   if (!S.ident || S.busy) return;
   if (document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && app.contains(document.activeElement) && S.tab !== 'dash') return; // don't wipe a form being typed in
@@ -152,12 +154,16 @@ function dash(p) {
 }
 function routeCard(r, ev) {
   const st = routeStats(r, visitsOf(ev.id));
-  const crew = st.latest ? (st.latest.crew || []).map(first).join(', ') : (r.crewLabel || '');
+  const ci = (S.crewsBy[ev.id] || {})[r.id];
+  const tonight = ci ? ci.crew : st.latest ? st.latest.crew : null;
+  const crewLine = tonight && tonight.length
+    ? `<b>Crew:</b> ${esc(tonight.map(pname).join(', '))}${ci ? ` <span class="muted">· signed on ${t12(ci.at)}${ci.by && ci.crew.length > 1 ? ' on ' + esc(first(ci.by)) + '’s phone' : ''}</span>` : ''}`
+    : `<span class="muted">Usual crew: ${esc((r.members || []).map(pname).join(', ') || r.crewLabel || 'none set')}</span>`;
   const now = st.open ? `<div class="now" style="color:var(--accent)">On site: ${esc(S.sites[st.open.siteId] ? S.sites[st.open.siteId].name : '')} · ${dur(Date.now() - st.open.startMs)}</div>`
     : st.done.length === st.stops.length && st.stops.length ? `<div class="now" style="color:var(--ok)">✓ Route complete</div>`
     : st.all.length ? `<div class="now">Driving / between sites · next: ${esc(st.nextS ? st.nextS.site.name : '')}</div>` : `<div class="now muted">Not started</div>`;
   return `<div class="rcard" style="--c:${esc(r.color || '#1d5fa8')}"><div class="row" style="justify-content:space-between"><h3>${esc(r.label)}</h3><b>${st.done.length}/${st.stops.length}</b></div>
-    <div class="crew">${esc(crew)}${r.machine ? ' · ' + esc(r.machine) : ''}</div>
+    <div class="crew">${crewLine}${r.machine ? ` <span class="muted">· ${esc(r.machine)}</span>` : ''}</div>
     <div class="prog"><div class="bar"><b style="width:${st.stops.length ? st.done.length / st.stops.length * 100 : 0}%"></b></div></div>
     ${now}<div class="small muted">${st.last ? 'Last activity ' + t12(st.last) + ' (' + dur(Date.now() - st.last) + ' ago)' : ''}</div>
     <div>${st.flags.map(([c, t]) => `<span class="flag ${c}">${esc(t)}</span>`).join('')}</div>
@@ -298,19 +304,43 @@ function reports(p) {
 }
 
 /* ---------- Routes & sites ---------- */
-let rsPlan = lsGet('dr-rs-plan', 'sidewalk'), rsRoute = lsGet('dr-rs-route', null);
+let rsPlan = lsGet('dr-rs-plan', 'sidewalk'), rsRoute = lsGet('dr-rs-route', null), rsFind = '';
+function routeOverviewCard(r) {
+  const stops = stopsOf(r);
+  const lo = stops.reduce((a, s) => a + (s.lo || 0), 0), hi = stops.reduce((a, s) => a + (s.hi ?? s.lo ?? 0), 0);
+  const noHrs = stops.filter(s => s.lo == null).length, est = stops.filter(s => s.site.pinExact === false).length, dl = stops.filter(s => s.site.deadline).length;
+  const crew = (r.members || []).map(pname).join(', ');
+  return `<div class="rcard" style="--c:${esc(r.color || '#1d5fa8')}"><div class="row" style="justify-content:space-between"><h3>${esc(r.label)}</h3><b>${stops.length} stops</b></div>
+    <div class="crew">${crew ? esc(crew) : `<span class="muted">${esc(r.crewLabel || 'No usual crew set')}</span>`}${r.machine ? ` <span class="muted">· ${esc(r.machine)}</span>` : ''}</div>
+    <div class="small muted" style="margin-top:4px">${esc(r.area || '')}</div>
+    ${r.plan !== 'drivelanes' && lo ? `<div class="small" style="margin-top:4px">Planned: <b>${lo === hi ? lo : lo + '–' + hi} hrs</b> on site</div>` : ''}
+    <div>${dl ? `<span class="flag red">${dl} deadline${dl > 1 ? 's' : ''}</span>` : ''}${est ? `<span class="flag amber">${est} pin${est > 1 ? 's' : ''} estimated</span>` : ''}${r.plan !== 'drivelanes' && noHrs ? `<span class="flag amber">${noHrs} without hours</span>` : ''}</div>
+    <p style="margin:8px 0 0"><button class="btn sm" type="button" data-open="${esc(r.id)}">Open route</button></p></div>`;
+}
 function routesTab(p) {
-  const list = S.routes.filter(r => r.plan === rsPlan);
-  let r = list.find(x => x.id === rsRoute) || list[0] || null;
-  p.innerHTML = `<div class="card"><div class="row">
-      <label class="grow">Plan<select id="rsp">${Object.entries(PLANS).map(([k, v]) => `<option value="${k}" ${k === rsPlan ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select></label>
-      <label class="grow">Route<select id="rsr">${list.map(x => `<option value="${x.id}" ${r && x.id === r.id ? 'selected' : ''}>${esc(x.label)}${x.crewLabel ? ' · ' + esc(x.crewLabel) : ''}</option>`).join('')}</select></label>
-      <button class="btn" id="newRoute" type="button">+ New route</button></div></div>
-    <div id="rsBody"></div>`;
-  $('#rsp').onchange = () => { rsPlan = $('#rsp').value; lsSet('dr-rs-plan', rsPlan); rsRoute = null; drawNow(); };
-  $('#rsr').onchange = () => { rsRoute = $('#rsr').value; lsSet('dr-rs-route', rsRoute); drawNow(); };
-  $('#newRoute').onclick = () => routeForm(null);
-  if (!r) { $('#rsBody').innerHTML = '<p class="muted">No routes in this plan yet.</p>'; return; }
+  const r = rsRoute ? S.routes.find(x => x.id === rsRoute && !x.archived) : null;
+  if (!r) {
+    // Overview: every route as a card, grouped by plan, plus a site finder.
+    const q = rsFind.trim().toLowerCase();
+    const hits = q ? Object.values(S.sites).filter(s => (s.name + ' ' + (s.owner || '') + ' ' + (s.addresses || []).join(' ')).toLowerCase().includes(q)).slice(0, 12) : [];
+    p.innerHTML = `<div class="card noprint"><label class="f" for="rsFind" style="margin-top:0">Find a site</label>
+        <input id="rsFind" placeholder="Site name, client or address" value="${esc(rsFind)}" autocomplete="off">
+        <div id="rsHits">${q ? (hits.map(s => `<div class="stoprow" style="grid-template-columns:minmax(0,1fr) auto"><div><b>${esc(s.name)}</b> <span class="muted small">${esc(s.owner || '')} · ${addrList(s.addresses).map(esc).join(' / ')}</span></div>
+          <div class="row">${S.routes.filter(x => !x.archived && (x.stops || []).some(y => y.siteId === s.id)).map(x => `<button class="btn sm" data-open="${esc(x.id)}" type="button" style="border-color:${esc(x.color || '#1d5fa8')}">${esc(PLANS[x.plan].short)} · ${esc(x.label)}</button>`).join('') || '<span class="small muted">Not on any route</span>'}</div></div>`).join('') || '<p class="small muted">No sites match.</p>') : ''}</div></div>` +
+      ['plow', 'drivelanes', 'sidewalk', 'day'].map(pl => {
+        const list = S.routes.filter(x => x.plan === pl && !x.archived);
+        return `<div class="row" style="justify-content:space-between;margin-top:14px"><h2 style="margin:0">${esc(PLANS[pl].label)}</h2><button class="btn sm" data-new="${pl}" type="button">+ New route</button></div>
+          <div class="grid" style="margin-top:8px">${list.map(routeOverviewCard).join('') || '<p class="muted">No routes yet.</p>'}</div>`;
+      }).join('');
+    const f = $('#rsFind');
+    f.oninput = () => { rsFind = f.value; const pos = f.selectionStart; drawNowForce(); const g = $('#rsFind'); if (g) { g.focus(); g.setSelectionRange(pos, pos); } };
+    $$('[data-open]', p).forEach(b => b.onclick = () => { rsRoute = b.dataset.open; lsSet('dr-rs-route', rsRoute); window.scrollTo(0, 0); drawNow(); });
+    $$('[data-new]', p).forEach(b => b.onclick = () => { rsPlan = b.dataset.new; lsSet('dr-rs-plan', rsPlan); routeForm(null); });
+    return;
+  }
+  rsPlan = r.plan;
+  p.innerHTML = `<p class="noprint"><button class="link" id="rsBack" type="button">← All routes</button> <span class="muted small">· ${esc(PLANS[r.plan].label)}</span></p><div id="rsBody"></div>`;
+  $('#rsBack').onclick = () => { rsRoute = null; lsSet('dr-rs-route', null); drawNow(); };
   const stops = stopsOf(r), crewNames = (r.members || []).map(pname).join(', ');
   $('#rsBody').innerHTML = `<div class="card rhead" style="--c:${esc(r.color || '#1d5fa8')}"><div class="row" style="justify-content:space-between"><div><h2>${esc(r.label)}</h2>
       <div class="muted small">${esc(r.area || '')}${r.machine ? ' · ' + esc(r.machine) : ''} · Crew: ${esc(crewNames || r.crewLabel || 'none set')}</div></div>
@@ -409,7 +439,7 @@ function routeForm(r) {
     <div class="two"><div><label class="f">Machine (optional)</label><input id="rM" value="${esc(r.machine || '')}"></div><div><label class="f">Colour</label><input id="rC" type="color" value="${esc(r.color || '#1d5fa8')}" style="height:44px"></div></div>
     <label class="f">Usual crew (they see this route first)</label><div class="checks">${crew.map(p => `<label><input type="checkbox" value="${p.id}" ${(r.members || []).includes(p.id) ? 'checked' : ''}>${esc(p.name)}</label>`).join('')}</div>
     ${isNew ? '' : '<p class="small muted">To retire a route, use “Archive route”: it disappears for crews but stays in old reports.</p>'}`,
-    [{ label: 'Cancel' }, ...(isNew ? [] : [{ label: 'Archive route', cls: 'danger', two: 'Tap again to archive', run: async d => { await backend.update('routes/' + r.id, { archived: true }).catch(e => toast(errText(e), 'bad')); d.close(); rsRoute = null; } }]),
+    [{ label: 'Cancel' }, ...(isNew ? [] : [{ label: 'Archive route', cls: 'danger', two: 'Tap again to archive', run: async d => { await backend.update('routes/' + r.id, { archived: true }).catch(e => toast(errText(e), 'bad')); d.close(); rsRoute = null; lsSet('dr-rs-route', null); } }]),
       { label: 'Save', cls: 'primary', run: async d => {
         const label = $('#rL').value.trim(); if (!label) return toast('Route name is needed', 'bad');
         const members = $$('#dlgB .checks input:checked').map(i => i.value);

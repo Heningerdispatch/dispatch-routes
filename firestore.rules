@@ -55,6 +55,15 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Who's out on each route for a snow event (sent when the crew taps Start route).
+    match /crews/{id} {
+      allow read: if isCrew();
+      allow write: if isAdmin() || (isCrew()
+        && request.resource.data.by == me()
+        && routeRunning(request.resource.data.eventId, request.resource.data.routeId)
+        && request.resource.data.keys().hasOnly(['eventId', 'routeId', 'crew', 'by', 'at']));
+    }
+
     // Site visits. Crews may start a visit for the running snow event, tick it off and complete it,
     // or cancel a visit they started by mistake. Once done or cancelled, only admins can change or delete it.
     match /visits/{id} {
