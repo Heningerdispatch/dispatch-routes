@@ -8,8 +8,9 @@ import {
 const app = $('#app');
 const S = { user: null, ident: null, event: null, active: [], routes: [], people: [], sites: {}, visits: [], visitsMeta: {}, route: null, crew: null, unsubs: [] };
 const PICK = 'dr-pick';   // {eventId, routeId} chosen on this phone
+const HOME = 'dr-home';   // {eventId, routeId} of their own route while they help on another one
 const crewKey = () => 'dr-crew-' + (S.event && S.event.id) + '-' + (S.route && S.route.id);
-let tick = null, installEvt = null;
+let tick = null, installEvt = null, gotoSite = null, query = '';
 
 registerSW();
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
@@ -153,31 +154,33 @@ function showPick() {
         `<button type="button" data-e="${esc(ev.id)}" data-r="${esc(r.id)}" class="mine" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(ev.name || '')} · ${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`).join('')}</div>
         <div class="small muted" style="margin-top:6px">Tap it to start, or pick a different route below if the office moved you tonight.</div></div>`
     : `<div class="banner info" style="margin-top:6px">You don’t have a usual route in tonight’s snow event${S.active.length > 1 ? 's' : ''}. Check with the office which route you’re on, then pick it below.</div>`;
-  app.innerHTML = `<h2>Which route are you on?</h2>${usualHTML}<h3 style="margin-top:18px">All routes running now</h3>` + S.active.map(ev => {
+  app.innerHTML = `${searchHTML()}<h2>Which route are you on?</h2>${usualHTML}<h3 style="margin-top:18px">All routes running now</h3>` + S.active.map(ev => {
     const rs = evRoutes(ev);
     const groups = ['plow', 'drivelanes', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
     return `<div class="card" style="padding:10px 12px"><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2><div class="muted small">Started ${esc(dayTime(ev.startMs))}</div>` +
       groups.map(([p, list]) => `<h3>${esc(PLANS[p].label)}</h3><div class="pick">${list.map(r => `<button type="button" data-e="${esc(ev.id)}" data-r="${esc(r.id)}" class="${(r.members || []).includes(me) ? 'mine' : ''}" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`).join('')}</div>`).join('') + '</div>';
   }).join('');
-  $$('.pick button').forEach(b => b.onclick = () => { lsSet(PICK, { eventId: b.dataset.e, routeId: b.dataset.r }); render(); });
+  $$('.pick button').forEach(b => b.onclick = () => { lsSet(PICK, { eventId: b.dataset.e, routeId: b.dataset.r }); lsSet(HOME, null); render(); });
+  wireSearch();
 }
 
 function showCrew() {
   const r = S.route, me = myId();
-  const pre = new Set([me, ...(r.members || [])]);
+  const helping = isHelping();
+  const pre = new Set(helping ? [me] : [me, ...(r.members || [])]);
   const ppl = S.people.filter(p => p.active !== false).sort((a, b) => (pre.has(b.id) - pre.has(a.id)) || a.name.localeCompare(b.name));
   $('#title').textContent = r.label;
-  app.innerHTML = `<h2>Who’s with you tonight?</h2><p class="muted small">${esc(r.label)}. Untick anyone who isn’t here and tick anyone filling in.</p>
+  app.innerHTML = `<h2>Who’s with you tonight?</h2><p class="muted small">${helping ? `You’re doing a site on ${esc(r.label)}. Tick anyone who’s with you.` : `${esc(r.label)}. Untick anyone who isn’t here and tick anyone filling in.`}</p>
     <div class="checks">${ppl.map(p => `<label><input type="checkbox" value="${esc(p.id)}" ${pre.has(p.id) ? 'checked' : ''} ${p.id === me ? 'disabled' : ''}>${esc(p.name)}${p.id === me ? ' (you)' : ''}</label>`).join('')}</div>
-    <p><button class="btn primary full" id="crewGo" type="button">Start route</button></p><p><button class="link" id="back" type="button">Pick a different route</button></p>`;
+    <p><button class="btn primary full" id="crewGo" type="button">${helping ? 'Go to the site' : 'Start route'}</button></p><p><button class="link" id="back" type="button">Pick a different route</button></p>`;
   $('#crewGo').onclick = () => {
     const ids = [me, ...$$('.checks input:checked').map(i => i.value).filter(v => v !== me)];
     lsSet(crewKey(), ids);
     // Tell the office who's out on this route tonight (shows on the dashboard before the first site).
-    save(backend.set(`crews/${S.event.id}__${r.id}`, { eventId: S.event.id, routeId: r.id, crew: ids, by: me, at: Date.now() }));
+    if (!helping) save(backend.set(`crews/${S.event.id}__${r.id}`, { eventId: S.event.id, routeId: r.id, crew: ids, by: me, at: Date.now() }));
     render();
   };
-  $('#back').onclick = () => { lsSet(PICK, null); render(); };
+  $('#back').onclick = () => { lsSet(PICK, null); lsSet(HOME, null); render(); };
 }
 
 function stopsOf(r) { return (r.stops || []).map((st, i) => ({ ...st, n: i + 1, site: S.sites[st.siteId] })).filter(s => s.site); }
@@ -191,8 +194,8 @@ function showRoute() {
   const doneN = stops.filter(isDone).length;
   const next = stops.find(s => !isDone(s) && !(open && open.siteId === s.siteId));
   $('#title').textContent = r.label;
-  const keepScroll = window.scrollY;
-  app.innerHTML = `<div class="card rhead" style="--c:${esc(r.color || '#1d5fa8')}">
+  const keepScroll = window.scrollY, home = lsGet(HOME, null), homeR = isHelping() && S.routes.find(x => x.id === home.routeId);
+  app.innerHTML = `${searchHTML()}${isHelping() ? `<div class="banner info helpbar"><span>You’re doing a site on <b>${esc(r.label)}</b>.</span>${homeR ? `<button class="btn sm" id="goHome" type="button">← Back to ${esc(homeR.label)}</button>` : ''}</div>` : ''}<div class="card rhead" style="--c:${esc(r.color || '#1d5fa8')}">
       <h2>${esc(r.label)}</h2>
       <div class="muted small">${esc(S.event.name || '')} · Crew: ${S.crew.map(id => esc(personName(id))).join(', ')}</div>
       <div class="prog"><b>${doneN} of ${stops.length} done</b> <span class="muted small">${open ? '· On site: ' + esc(S.sites[open.siteId] ? S.sites[open.siteId].name : '') : next ? '· Next: ' + esc(next.site.name) : '· Route complete'}</span>
@@ -203,7 +206,10 @@ function showRoute() {
     <ol class="stops" style="--c:${esc(r.color || '#1d5fa8')}">${stops.map(s => stopHTML(s, vOf(s), open, next)).join('')}</ol>
     <div class="yardrow"><span class="num">Y</span><span>Back to ${esc(YARD.name)}</span></div>`;
   window.scrollTo(0, keepScroll);
-  wireStops(stops, vOf, open);
+  wireStops(stops, vOf, open); wireSearch();
+  if ($('#goHome')) $('#goHome').onclick = () => { lsSet(PICK, home); lsSet(HOME, null); window.scrollTo(0, 0); render(); };
+  if (gotoSite) { const li = $(`li.stop[data-site="${CSS.escape(gotoSite)}"]`); gotoSite = null;
+    if (li) { li.scrollIntoView({ block: 'center' }); li.classList.add('flash'); setTimeout(() => li.classList.remove('flash'), 2500); } }
   tick = setInterval(() => $$('[data-since]').forEach(e => { e.textContent = dur(Date.now() - +e.dataset.since); }), 30000);
 }
 
@@ -298,6 +304,41 @@ async function startVisit(s, vs) {
 }
 function save(p) { if (p && p.catch) p.catch(e => toast(errText(e), 'bad')); }
 
+/* ---------- Find a site (crews who do odd sites on other routes) ---------- */
+function isHelping() { const h = lsGet(HOME, null), p = lsGet(PICK, null); return !!(h && p && (h.routeId !== p.routeId || h.eventId !== p.eventId)); }
+function searchHTML() {
+  return `<div class="search"><input id="q" type="search" placeholder="🔍 Find a site: name or address" autocomplete="off" value="${esc(query)}"><div id="qres"></div></div>`;
+}
+function wireSearch() {
+  const q = $('#q'); if (!q) return;
+  const show = () => { query = q.value; $('#qres').innerHTML = searchResults(query); $$('#qres [data-go]').forEach(b => b.onclick = () => goTo(b.dataset.e, b.dataset.r, b.dataset.go)); };
+  q.oninput = show; if (query) show();
+}
+function searchResults(text) {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean); if (!words.length) return '';
+  const hits = Object.values(S.sites).filter(st => { const hay = [st.name, st.owner, ...addrList(st.addresses)].join(' ').toLowerCase(); return words.every(w => hay.includes(w)); }).slice(0, 12);
+  if (!hits.length) return '<p class="small muted">No site matches. Check the spelling or try part of the address.</p>';
+  return '<div class="sres">' + hits.map(st => {
+    const on = S.active.flatMap(ev => evRoutes(ev).filter(r => (r.stops || []).some(x => x.siteId === st.id)).map(r => ({ ev, r })));
+    const done = () => on.length && S.visits.some(v => v.siteId === st.id && v.status === 'done');
+    return `<div class="sr"><b>${esc(st.name)}</b><div class="small muted">${esc(st.owner ? st.owner + ' · ' : '')}${addrList(st.addresses).map(esc).join(' / ')}</div>
+      ${on.length ? `<div class="row">${on.map(({ ev, r }) => `<button class="btn sm" type="button" data-e="${esc(ev.id)}" data-r="${esc(r.id)}" data-go="${esc(st.id)}" style="border-left:5px solid ${esc(r.color || '#1d5fa8')}">${esc(r.label)}${S.active.length > 1 ? ' · ' + esc(ev.name || '') : ''} ›</button>`).join('')}</div>`
+        : '<div class="small" style="color:var(--warn)">Not on tonight’s routes. Call the office before doing it.</div>'}
+      ${done() ? '<div class="small" style="color:var(--ok)">✓ Already done tonight</div>' : ''}</div>`;
+  }).join('') + '</div>';
+}
+function goTo(eventId, routeId, siteId) {
+  const cur = lsGet(PICK, null), home = lsGet(HOME, null);
+  // Remember their own route so they can get back to it; if they're going to their own route, they're not helping.
+  if (!home) lsSet(HOME, cur || { eventId: null, routeId: null });   // no route of their own yet: they're just doing odd sites
+  const h = lsGet(HOME, null);
+  if (h && h.routeId === routeId && h.eventId === eventId) lsSet(HOME, null);
+  const crew = cur ? S.crew : null;   // only carry over a crew they already confirmed on their own route
+  lsSet(PICK, { eventId, routeId });
+  if (crew && !lsGet('dr-crew-' + eventId + '-' + routeId, null) && lsGet(HOME, null)) lsSet('dr-crew-' + eventId + '-' + routeId, crew);
+  query = ''; gotoSite = siteId; render();
+}
+
 /* ---------- Menu ---------- */
 $('#menuBtn').onclick = () => {
   const b = $('#menuBody');
@@ -312,7 +353,7 @@ $('#menuBtn').onclick = () => {
     ${S.ident && S.ident.role === 'admin' ? '<p><a href="admin.html">Open office dashboard</a></p>' : ''}`;
   $$('[data-m]', b).forEach(x => x.onclick = async () => {
     const m = x.dataset.m; $('#menu').close();
-    if (m === 'route') { lsSet(PICK, null); render(); }
+    if (m === 'route') { lsSet(PICK, null); lsSet(HOME, null); render(); }
     if (m === 'crew') { lsSet(crewKey(), null); render(); }
     if (m === 'install' && installEvt) { installEvt.prompt(); installEvt = null; }
     if (m === 'out') backend.signOut();

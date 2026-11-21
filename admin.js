@@ -94,11 +94,12 @@ function drawNowForce() { const ae = document.activeElement; if (ae && ae.blur) 
 function drawNow() {
   if (!S.ident || S.busy) return;
   if (document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && app.contains(document.activeElement) && S.tab !== 'dash') return; // don't wipe a form being typed in
-  const y = window.scrollY;
+  const y = window.scrollY, ae = document.activeElement, keepId = ae && ae.id && app.contains(ae) ? ae.id : null, caret = keepId && ae.selectionStart != null ? ae.selectionStart : null;
   app.innerHTML = `<nav class="otabs noprint" role="tablist">${TABS.map(([k, l]) => `<button role="tab" type="button" data-tab="${k}" aria-selected="${S.tab === k}">${l}</button>`).join('')}</nav><div id="pane"></div>`;
   $$('[data-tab]').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; lsSet('dr-admin-tab', S.tab); drawNow(); });
   ({ dash, events, reports, routes: routesTab, people, data })[S.tab]($('#pane'));
   window.scrollTo(0, y);
+  if (keepId) { const el = document.getElementById(keepId); if (el) { el.focus({ preventScroll: true }); if (caret != null && el.setSelectionRange) el.setSelectionRange(caret, caret); } }
 }
 
 /* ---------- Dialog ---------- */
@@ -140,7 +141,8 @@ function dash(p) {
     const sl = $('#seeLast'); if (sl) sl.onclick = () => { S.viewEventId = lastEv.id; ensureVisits(lastEv.id); drawNow(); };
     return;
   }
-  p.innerHTML = (view ? `<p class="noprint"><button class="link" id="backLive" type="button">← Back to the running snow events</button></p>` : '') + list.map(ev => {
+  p.innerHTML = (view ? `<p class="noprint"><button class="link" id="backLive" type="button">← Back to the running snow events</button></p>` : '') +
+    `<div class="card noprint" style="padding:10px 12px"><input id="dashFind" type="search" placeholder="🔍 Find a site: name, client or address" value="${esc(dashFind)}" autocomplete="off"><div id="dashHits">${dashHits(list)}</div></div>` + list.map(ev => {
     const rs = evRoutes(ev), vis = visitsOf(ev.id);
     const tot = rs.reduce((a, r) => { const st = routeStats(r, vis); a.d += st.done.length; a.t += st.stops.length; a.o += st.open ? 1 : 0; return a; }, { d: 0, t: 0, o: 0 });
     return `<section style="margin-bottom:22px"><div class="row" style="justify-content:space-between;margin:6px 0"><div><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2>
@@ -150,12 +152,38 @@ function dash(p) {
         return `<h3>${esc(PLANS[pl].label)}</h3><div class="grid">${l.map(r => routeCard(r, ev)).join('')}</div>`; }).join('')}</section>`;
   }).join('');
   const bl = $('#backLive'); if (bl) bl.onclick = () => { S.viewEventId = null; drawNow(); };
-  $$('[data-rd]', p).forEach(b => b.onclick = () => routeDetail(b.dataset.rd, b.dataset.ev));
+  const wire = () => $$('[data-rd]', p).forEach(b => b.onclick = () => routeDetail(b.dataset.rd, b.dataset.ev));
+  const f = $('#dashFind'); f.oninput = () => { dashFind = f.value; $('#dashHits').innerHTML = dashHits(list); wire(); };
+  wire();
+}
+// Where is a site tonight? Status on every route it's on in the shown snow event(s), with who did it and when.
+let dashFind = '';
+function dashHits(list) {
+  const words = dashFind.toLowerCase().split(/\s+/).filter(Boolean); if (!words.length) return '';
+  const hits = Object.values(S.sites).filter(s => { const hay = [s.name, s.owner || '', ...addrList(s.addresses)].join(' ').toLowerCase(); return words.every(w => hay.includes(w)); }).slice(0, 10);
+  if (!hits.length) return '<p class="small muted" style="margin:8px 0 0">No site matches.</p>';
+  return '<div style="margin-top:6px">' + hits.map(s => {
+    const rows = list.flatMap(ev => evRoutes(ev).filter(r => (r.stops || []).some(x => x.siteId === s.id)).map(r => {
+      const vs = visitsOf(ev.id).filter(v => v.routeId === r.id && v.siteId === s.id && v.status !== 'cancelled').sort((a, b) => a.startMs - b.startMs);
+      const open = vs.find(v => v.status === 'open'), done = vs.filter(v => v.status === 'done');
+      const who = v => esc((v.crew || [v.startBy]).map(first).join(', '));
+      const status = open ? `<b style="color:var(--accent)">On site</b> since ${t12(open.startMs)} (${dur(Date.now() - open.startMs)}) · ${who(open)}`
+        : done.length ? done.map((v, i) => `<b style="color:var(--ok)">✓ ${done.length > 1 ? 'Visit ' + (i + 1) : 'Done'}</b> ${t12(v.startMs)}–${t12(v.endMs)} · ${dur(v.endMs - v.startMs)} · ${who(v)}`).join('<br>')
+        : '<span class="muted">Not started</span>';
+      return `<div class="row" style="justify-content:space-between;gap:8px;border-left:5px solid ${esc(r.color || '#1d5fa8')};padding:4px 0 4px 8px;margin-top:4px">
+        <div class="small"><b>${esc(r.label)}</b>${list.length > 1 ? ' <span class="muted">· ' + esc(ev.name || '') + '</span>' : ''}<br>${status}</div>
+        <button class="btn sm" type="button" data-rd="${esc(r.id)}" data-ev="${esc(ev.id)}">Details & fixes</button></div>`;
+    }));
+    return `<div class="stoprow" style="display:block;padding:8px 0;border-bottom:1px solid var(--line)"><b>${esc(s.name)}</b> <span class="muted small">${esc(s.owner || '')}${s.owner ? ' · ' : ''}${addrList(s.addresses).map(esc).join(' / ')}</span>
+      ${rows.length ? rows.join('') : `<div class="small muted">Not on ${list.length > 1 ? 'any running snow event’s' : 'this snow event’s'} routes.</div>`}</div>`;
+  }).join('') + '</div>';
 }
 function routeCard(r, ev) {
   const st = routeStats(r, visitsOf(ev.id));
   const ci = (S.crewsBy[ev.id] || {})[r.id];
-  const tonight = ci ? ci.crew : st.latest ? st.latest.crew : null;
+  // No sign-on yet: use the latest visit by one of this route's own crew (not someone helping from another route).
+  const own = st.all.filter(v => (r.members || []).includes(v.startBy)).sort((a, b) => (b.startMs || 0) - (a.startMs || 0))[0];
+  const tonight = ci ? ci.crew : own ? own.crew : null;
   const crewLine = tonight && tonight.length
     ? `<b>Crew:</b> ${esc(tonight.map(pname).join(', '))}${ci ? ` <span class="muted">· signed on ${t12(ci.at)}${ci.by && ci.crew.length > 1 ? ' on ' + esc(first(ci.by)) + '’s phone' : ''}</span>` : ''}`
     : `<span class="muted">Usual crew: ${esc((r.members || []).map(pname).join(', ') || r.crewLabel || 'none set')}</span>`;
@@ -477,6 +505,7 @@ function people(p) {
       <td>${x.pinUid ? (x.pinLen ? x.pinLen + ' digits · ' : '') + 'set ' + esc(day(x.pinSetMs)) : '<span class="muted">No PIN yet</span>'}</td><td>${x.emailUid ? esc(x.email || 'Yes') : ''}</td><td>${x.active === false ? 'Turned off' : 'Active'}</td>
       <td class="row"><button class="btn sm" data-pin="${x.id}" type="button" ${x.active === false ? 'disabled' : ''}>${x.pinUid ? 'Change PIN' : 'Set PIN'}</button>
         ${x.role === 'admin' && !x.emailUid ? `<button class="btn sm" data-office="${x.id}" type="button">Office login</button>` : ''}
+        ${x.emailUid && x.email ? `<button class="btn sm" data-pw="${x.id}" type="button">Office password</button>` : ''}
         <button class="btn sm" data-pe="${x.id}" type="button">Edit</button>
         ${x.id === S.me ? '' : `<button class="btn sm ${x.active === false ? '' : 'danger'}" data-act="${x.id}" type="button">${x.active === false ? 'Turn on' : 'Turn off'}</button>`}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No people yet. Add them here or import the starting data.</td></tr>'}</tbody></table></div>`;
   $('#addP').onclick = () => personForm(null);
@@ -484,6 +513,7 @@ function people(p) {
   $$('[data-pin]').forEach(b => b.onclick = () => pinForm(S.people.find(x => x.id === b.dataset.pin)));
   $('#linkL').onclick = () => linkForm();
   $$('[data-office]').forEach(b => b.onclick = () => officeLogin(S.people.find(x => x.id === b.dataset.office)));
+  $$('[data-pw]').forEach(b => b.onclick = () => officePassword(S.people.find(x => x.id === b.dataset.pw)));
   $$('[data-act]').forEach(b => twoTap(b, 'Tap again', () => setActive(S.people.find(x => x.id === b.dataset.act))));
 }
 function personForm(x) {
@@ -564,6 +594,48 @@ function officeLogin(x) {
         await backend.batch([{ op: 'set', path: 'uids/' + uid, data: { personId: x.id, role: 'admin', active: true } }, { op: 'update', path: 'people/' + x.id, data: { emailUid: uid, email } }]);
         d.close(); toast('Office login created'); } catch (e) { toast(errText(e), 'bad'); }
     } }]);
+}
+// Firebase's free plan can't change someone else's password directly, so there are two ways:
+// email them a reset link, or (after the old login is deleted in the Firebase console) make a new login with a password you choose.
+const USERS_URL = 'https://console.firebase.google.com/project/dispatch-routes-a9a58/authentication/users';
+function officePassword(x) {
+  const self = x.id === S.me;
+  dialog(`Office password for ${x.name}`, `<p class="small">Their office login: <b>${esc(x.email)}</b></p>
+    <h3 style="margin:14px 0 4px">Send a reset email</h3>
+    <p class="small muted">Firebase emails them a link to choose a new password. Ask them to check junk mail if it doesn't show up in a few minutes.</p>
+    <button class="btn primary" id="pwMail" type="button">Email a reset link to ${esc(x.email)}</button>
+    ${self ? `<p class="small muted" style="margin-top:14px">To change your own password right now, use <b>Account</b> at the top of the page.</p>` : `
+    <details style="margin-top:16px"><summary><b>Or set a password for them</b></summary>
+      <ol class="small">
+        <li>Open <a href="${USERS_URL}" target="_blank" rel="noopener">Firebase → Authentication → Users ↗</a>, find <b>${esc(x.email)}</b>, tap its <b>⋮</b> menu and choose <b>Delete account</b>.</li>
+        <li>Come back here, type the new password and tap <b>Set password</b>.</li>
+      </ol>
+      <label class="f" for="pwNew">New password (8+ characters)</label><input id="pwNew" autocomplete="off" value="${randPin()}${randPin().slice(0, 2)}">
+      <p class="small muted">Share it with them privately. They can change it later from <b>Account</b>.</p>
+      <button class="btn" id="pwSet" type="button">Set password</button>
+    </details>`}`, [{ label: 'Close' }]);
+  $('#pwMail').onclick = async () => {
+    const b = $('#pwMail'); b.disabled = true; b.textContent = 'Sending…';
+    try { await backend.resetPassword(x.email); b.textContent = 'Reset email sent'; toast(`Reset email sent to ${x.email}`); }
+    catch (e) { b.disabled = false; b.textContent = `Email a reset link to ${x.email}`; toast(/user-not-found/.test(e.code || '') ? 'There’s no login for that email any more. Use “Set a password” below.' : errText(e), 'bad'); }
+  };
+  const set = $('#pwSet'); if (!set) return;
+  set.onclick = async () => {
+    const pw = $('#pwNew').value;
+    if (pw.length < 8) return toast('Use at least 8 characters', 'bad');
+    set.disabled = true; set.textContent = 'Setting…';
+    try {
+      const uid = await backend.createLogin(x.email, pw);
+      const ops = [{ op: 'set', path: 'uids/' + uid, data: { personId: x.id, role: x.role === 'admin' ? 'admin' : 'crew', active: x.active !== false } },
+        { op: 'update', path: 'people/' + x.id, data: { emailUid: uid } }];
+      if (x.emailUid && x.emailUid !== uid) ops.push({ op: 'delete', path: 'uids/' + x.emailUid });
+      await backend.batch(ops);
+      $('#dlg').close(); toast(`New password set for ${x.name.split(' ')[0]}`);
+    } catch (e) {
+      set.disabled = false; set.textContent = 'Set password';
+      toast(/email-already-in-use/.test(e.code || '') ? `${x.email} still has a login. Delete it in Firebase first (step 1), then try again.` : errText(e), 'bad');
+    }
+  };
 }
 async function setActive(x) {
   const on = x.active === false, ops = [{ op: 'update', path: 'people/' + x.id, data: { active: on } }];
