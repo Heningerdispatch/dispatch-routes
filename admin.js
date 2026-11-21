@@ -148,11 +148,12 @@ function dash(p) {
     return `<section style="margin-bottom:22px"><div class="row" style="justify-content:space-between;margin:6px 0"><div><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2>
         <div class="muted small">${ev.active === true ? '<b style="color:var(--ok)">● Running</b>' : 'Ended ' + esc(dayTime(ev.endMs))} · started ${esc(dayTime(ev.startMs))} by ${esc(first(ev.startedBy))} · ${rs.length} route${rs.length === 1 ? '' : 's'}</div></div>
         <div class="muted"><b>${tot.d} of ${tot.t}</b> sites done · ${tot.o} crew${tot.o === 1 ? '' : 's'} on site now</div></div>
-      ${['plow', 'drivelanes', 'sidewalk', 'day'].map(pl => { const l = rs.filter(r => r.plan === pl); if (!l.length) return '';
+      ${['quick', 'plow', 'drivelanes', 'sidewalk', 'day'].map(pl => { const l = rs.filter(r => r.plan === pl); if (!l.length) return '';
         return `<h3>${esc(PLANS[pl].label)}</h3><div class="grid">${l.map(r => routeCard(r, ev)).join('')}</div>`; }).join('')}</section>`;
   }).join('');
   const bl = $('#backLive'); if (bl) bl.onclick = () => { S.viewEventId = null; drawNow(); };
   const wire = () => $$('[data-rd]', p).forEach(b => b.onclick = () => routeDetail(b.dataset.rd, b.dataset.ev));
+  $$('[data-qadd]', p).forEach(b => b.onclick = () => addForm(S.routes.find(x => x.id === b.dataset.qadd)));
   const f = $('#dashFind'); f.oninput = () => { dashFind = f.value; $('#dashHits').innerHTML = dashHits(list); wire(); };
   wire();
 }
@@ -195,7 +196,7 @@ function routeCard(r, ev) {
     <div class="prog"><div class="bar"><b style="width:${st.stops.length ? st.done.length / st.stops.length * 100 : 0}%"></b></div></div>
     ${now}<div class="small muted">${st.last ? 'Last activity ' + t12(st.last) + ' (' + dur(Date.now() - st.last) + ' ago)' : ''}</div>
     <div>${st.flags.map(([c, t]) => `<span class="flag ${c}">${esc(t)}</span>`).join('')}</div>
-    <p style="margin:8px 0 0"><button class="btn sm" type="button" data-rd="${esc(r.id)}" data-ev="${esc(ev.id)}">Details & fixes</button></p></div>`;
+    <p style="margin:8px 0 0" class="row"><button class="btn sm" type="button" data-rd="${esc(r.id)}" data-ev="${esc(ev.id)}">Details & fixes</button>${r.temp && ev.active === true ? `<button class="btn sm" type="button" data-qadd="${esc(r.id)}">+ Add a site</button>` : ''}</p></div>`;
 }
 function visitLine(v, site) {
   const fl = [];
@@ -216,7 +217,8 @@ function routeDetail(rid, eid) {
         <span class="noprint">${v.status === 'open' ? `<button class="link" data-close="${v.id}" type="button">Close now</button> · ` : ''}<button class="link" data-edit="${v.id}" type="button">Edit times</button> · <button class="link" data-del="${v.id}" type="button">Delete</button></span></div>`).join('')
         : '<div class="small muted">Not visited</div>'}</div><span></span></div>`;
   }).join('');
-  const d = dialog(`${r.label} · ${st.done.length}/${st.stops.length} done`, body, [{ label: 'Close' }]);
+  const canAdd = r.temp && ev.active === true;
+  const d = dialog(`${r.label} · ${st.done.length}/${st.stops.length} done`, body, [...(canAdd ? [{ label: '+ Add a site', cls: 'primary', run: () => addForm(r, () => routeDetail(rid, eid)) }] : []), { label: 'Close' }]);
   $$('[data-close]', d).forEach(b => twoTap(b, 'Tap again to close it now', () => upd(b.dataset.close, { status: 'done', endMs: Date.now(), endBy: S.me, editedBy: S.me, editedMs: Date.now() }, rid, eid)));
   $$('[data-del]', d).forEach(b => twoTap(b, 'Tap again to delete this visit', () => backend.del('visits/' + b.dataset.del).then(() => { toast('Visit deleted'); routeDetail(rid, eid); }).catch(e => toast(errText(e), 'bad'))));
   $$('[data-edit]', d).forEach(b => b.onclick = () => editVisit(b.dataset.edit, rid, eid));
@@ -245,7 +247,7 @@ function events(p) {
   const hiddenN = S.routes.filter(r => !r.archived && r.hidden).length;
   p.innerHTML = `${run.length ? `<h2>Running now</h2>${run.map(e => `<div class="card"><div class="row" style="justify-content:space-between"><div><b>${esc(e.name)}</b>
         <div class="muted small">Started ${esc(dayTime(e.startMs))} · ${evRoutes(e).map(r => esc(r.label)).join(', ')}</div></div>
-        <button class="btn danger" data-end="${e.id}" type="button">End this snow event</button></div></div>`).join('')}
+        <button class="btn danger" data-end="${e.id}" type="button">${e.quick ? 'End this quick job' : 'End this snow event'}</button></div></div>`).join('')}
       <p class="small muted">Save its report first if you want a copy (Reports tab).</p>` : ''}
     <div class="card"><h2>Start a snow event</h2>
       <p class="muted small">Tick the routes going out. You can run more than one snow event at once, for example sidewalks at 5 AM and plows at 8 PM. A route already in a running event can’t be added to another.</p>
@@ -256,6 +258,7 @@ function events(p) {
       <p class="small muted">Full plow routes and drive lane routes use the same machines, so usually tick one or the other.${hiddenN ? ` ${hiddenN} hidden route${hiddenN > 1 ? 's aren’t' : ' isn’t'} listed; show ${hiddenN > 1 ? 'them' : 'it'} on Routes &amp; sites.` : ''}</p>
       <div class="err" id="everr"></div>
       <button class="btn go" id="startEv" type="button">Start snow event</button></div>
+    ${quickJobCard()}
     <h2>Past snow events</h2>
     <div class="tscroll"><table class="t"><thead><tr><th>Name</th><th>Started</th><th>Ended</th><th>Routes</th><th></th></tr></thead><tbody>
     ${S.events.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(dayTime(e.startMs))}</td><td>${e.active === true ? '<b>Running</b>' : esc(dayTime(e.endMs))}</td><td>${evRoutes(e).length}</td>
@@ -271,10 +274,75 @@ function events(p) {
     } catch (e) { toast(errText(e), 'bad'); }
   });
   $$('[data-end]', p).forEach(b => twoTap(b, 'Tap again to end it', async () => {
-    try { await backend.update('events/' + b.dataset.end, { active: false, endMs: Date.now(), endedBy: S.me }); toast('Snow event ended'); } catch (e) { toast(errText(e), 'bad'); }
+    const ev = evById(b.dataset.end);
+    // A quick job's route is only for that job: put it away when the job ends (it stays in that event's report).
+    const temp = S.routes.filter(r => r.temp && (ev.routes || []).includes(r.id)).map(r => ({ op: 'update', path: 'routes/' + r.id, data: { archived: true } }));
+    try { await backend.batch([{ op: 'update', path: 'events/' + b.dataset.end, data: { active: false, endMs: Date.now(), endedBy: S.me } }, ...temp]); toast(temp.length ? 'Quick job ended' : 'Snow event ended'); } catch (e) { toast(errText(e), 'bad'); }
   }));
+  wireQuickJob(p);
   $$('[data-view]', p).forEach(b => b.onclick = () => { S.viewEventId = b.dataset.view; ensureVisits(S.viewEventId); S.tab = 'dash'; drawNow(); });
   $$('[data-rep]', p).forEach(b => b.onclick = () => { S.repEventId = b.dataset.rep; ensureVisits(S.repEventId); S.tab = 'reports'; drawNow(); });
+}
+
+/* ---------- Quick job: a one-off route with just the sites you pick, run as its own event ---------- */
+const QJ = { name: '', sites: [], crew: [], q: '' };
+const qjDefault = () => 'Quick job – ' + day(Date.now()) + ' ' + t12(Date.now());
+function quickJobCard() {
+  const ppl = S.people.filter(x => x.active !== false).sort((a, b) => a.name.localeCompare(b.name));
+  return `<div class="card" id="qjCard"><h2>Quick job</h2>
+    <p class="muted small">For one-off work: only the sites you pick go out, as their own route and their own event, so the report shows just those sites. Crews see it at the top of their route list.</p>
+    <label class="f" for="qjName">Name</label><input id="qjName" value="${esc(QJ.name)}" placeholder="${esc(qjDefault())}">
+    <label class="f" for="qjFind">Add sites</label><input id="qjFind" type="search" value="${esc(QJ.q)}" placeholder="Search a site name, client or address" autocomplete="off">
+    <div id="qjHits"></div>
+    <p class="small" style="margin:6px 0"><button class="link" id="qjNew" type="button">+ Site isn’t in the list: add a new site</button></p>
+    <div id="qjList">${qjListHTML()}</div>
+    <details style="margin-top:10px" ${QJ.crew.length ? 'open' : ''}><summary><b>Who’s going</b> <span class="muted small">(optional: it shows as their route at the top of the crew app)</span></summary>
+      <div class="checks" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px 8px">${ppl.map(x => `<label style="margin:0;padding:6px 8px"><input type="checkbox" data-qjc="${esc(x.id)}" ${QJ.crew.includes(x.id) ? 'checked' : ''}>${esc(x.name)}</label>`).join('')}</div></details>
+    <div class="err" id="qjErr"></div>
+    <button class="btn go" id="qjGo" type="button">Start quick job</button></div>`;
+}
+function qjListHTML() {
+  if (!QJ.sites.length) return '<p class="small muted">No sites added yet.</p>';
+  return `<ol class="small" style="padding-left:20px">${QJ.sites.map((id, i) => { const s = S.sites[id] || { name: id };
+    return `<li style="margin:4px 0"><b>${esc(s.name)}</b> <span class="muted">${addrList(s.addresses).map(esc).join(' / ')}</span> <button class="link" data-qjrm="${i}" type="button">Remove</button></li>`; }).join('')}</ol>`;
+}
+function qjHitsHTML() {
+  const words = QJ.q.toLowerCase().split(/\s+/).filter(Boolean); if (!words.length) return '';
+  const hits = Object.values(S.sites).filter(s => { const hay = [s.name, s.owner || '', ...addrList(s.addresses)].join(' ').toLowerCase(); return words.every(w => hay.includes(w)); }).slice(0, 8);
+  if (!hits.length) return '<p class="small muted">No site matches. Use “add a new site” below.</p>';
+  return hits.map(s => `<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:5px 0"><span class="small"><b>${esc(s.name)}</b> <span class="muted">${esc(s.owner || '')}${s.owner ? ' · ' : ''}${addrList(s.addresses).map(esc).join(' / ')}</span></span>
+    ${QJ.sites.includes(s.id) ? '<span class="small muted">Added</span>' : `<button class="btn sm" data-qjadd="${esc(s.id)}" type="button">+ Add</button>`}</div>`).join('');
+}
+function wireQuickJob(p) {
+  if (!$('#qjCard')) return;
+  const refresh = () => {
+    $('#qjHits').innerHTML = qjHitsHTML(); $('#qjList').innerHTML = qjListHTML();
+    $$('[data-qjadd]', p).forEach(b => b.onclick = () => { QJ.sites.push(b.dataset.qjadd); refresh(); });
+    $$('[data-qjrm]', p).forEach(b => b.onclick = () => { QJ.sites.splice(+b.dataset.qjrm, 1); refresh(); });
+  };
+  $('#qjName').oninput = e => { QJ.name = e.target.value; };
+  $('#qjFind').oninput = e => { QJ.q = e.target.value; refresh(); };
+  $$('[data-qjc]', p).forEach(c => c.onchange = () => { QJ.crew = $$('[data-qjc]:checked', p).map(x => x.dataset.qjc); });
+  refresh();
+  $('#qjNew').onclick = () => dialog('New site for this quick job', siteFields({ name: QJ.q }, {}), [{ label: 'Cancel' }, { label: 'Add site', cls: 'primary', run: async d => {
+    const v = readSite(null); if (!v) return;
+    let id = slug(v.site.name) || 'site'; while (S.sites[id]) id += '-2';
+    try { await backend.set('sites/' + id, v.site); S.sites[id] = { id, ...v.site }; QJ.sites.push(id); QJ.q = ''; d.close(); drawNow(); toast('Site added'); } catch (e) { toast(errText(e), 'bad'); }
+  } }]);
+  twoTap($('#qjGo'), 'Tap again to send it out', async () => {
+    if (!QJ.sites.length) { $('#qjErr').textContent = 'Add at least one site.'; return; }
+    const name = QJ.name.trim() || qjDefault();
+    // Planned hours: copy from the site's regular route if it has one.
+    const stops = QJ.sites.map(id => { const st = S.routes.filter(r => !r.archived && !r.temp).flatMap(r => r.stops || []).find(x => x.siteId === id) || {}; return { siteId: id, lo: st.lo ?? null, hi: st.hi ?? st.lo ?? null }; });
+    const rid = backend.newId('routes'), eid = backend.newId('events');
+    try {
+      await backend.batch([
+        { op: 'set', path: 'routes/' + rid, data: { plan: 'quick', temp: true, label: name, order: 0, color: '#7c3aed', area: 'Quick job', crewLabel: QJ.crew.map(first).join(' & '), machine: '', members: QJ.crew, stops, archived: false, hidden: false } },
+        { op: 'set', path: 'events/' + eid, data: { name, routes: [rid], startMs: Date.now(), startedBy: S.me, active: true, quick: true } }]);
+      QJ.name = ''; QJ.sites = []; QJ.crew = []; QJ.q = '';
+      ensureVisits(eid); S.viewEventId = null; S.tab = 'dash'; lsSet('dr-admin-tab', 'dash'); toast('Quick job sent out'); drawNow();
+    } catch (e) { toast(errText(e), 'bad'); }
+  });
 }
 
 /* ---------- Reports ---------- */
@@ -437,10 +505,10 @@ function siteForm(r, i) {
       try { await backend.batch([{ op: 'set', path: 'sites/' + st.siteId, data: v.site, merge: true }, { op: 'update', path: 'routes/' + r.id, data: { stops: ns } }]); d.close(); toast('Site saved'); } catch (e) { toast(errText(e), 'bad'); }
     } }]);
 }
-function addForm(r) {
+function addForm(r, after) {
   const used = new Set((r.stops || []).map(s => s.siteId));
   const opts = Object.values(S.sites).filter(s => !used.has(s.id)).sort((a, b) => a.name.localeCompare(b.name));
-  const d = dialog(`Add a site to ${r.label}`, `<label class="f">Site</label><select id="aPick"><option value="__new">+ A new site</option>${opts.map(s => `<option value="${s.id}">${esc(s.name)} – ${esc(addrList(s.addresses)[0] || '')}</option>`).join('')}</select>
+  const d = dialog(`Add a site to ${r.label}`, `<label class="f">Find a site</label><input id="aFind" type="search" placeholder="Type a name or address to narrow the list" autocomplete="off"><select id="aPick" style="margin-top:6px"><option value="__new">+ A new site</option>${opts.map(s => `<option value="${s.id}">${esc(s.name)} – ${esc(addrList(s.addresses)[0] || '')}</option>`).join('')}</select>
     <label class="f">Put it at stop number</label><input id="aPos" inputmode="numeric" value="${(r.stops || []).length + 1}">
     <div id="aNew">${siteFields(null, null)}</div><div id="aOld" hidden><div class="two"><div><label class="f">Planned hrs</label><input id="oLo" inputmode="decimal"></div><div><label class="f">Up to hrs</label><input id="oHi" inputmode="decimal"></div></div></div>`,
     [{ label: 'Cancel' }, { label: 'Add', cls: 'primary', run: async d => {
@@ -454,9 +522,14 @@ function addForm(r) {
         ns.splice(pos, 0, { siteId: $('#aPick').value, lo, hi });
       }
       ops.push({ op: 'update', path: 'routes/' + r.id, data: { stops: ns } });
-      try { await backend.batch(ops); d.close(); toast('Site added'); } catch (e) { toast(errText(e), 'bad'); }
+      try { await backend.batch(ops); d.close(); toast(r.temp ? 'Site added: crews see it right away' : 'Site added'); if (after) setTimeout(after, 50); } catch (e) { toast(errText(e), 'bad'); }
     } }]);
   $('#aPick').onchange = () => { const n = $('#aPick').value === '__new'; $('#aNew').hidden = !n; $('#aOld').hidden = n; };
+  $('#aFind').oninput = () => {
+    const w = $('#aFind').value.toLowerCase().split(/\s+/).filter(Boolean); let firstHit = null;
+    $$('#aPick option').forEach(o => { if (o.value === '__new') return; const hit = w.every(x => o.textContent.toLowerCase().includes(x)); o.hidden = !hit; if (hit && !firstHit) firstHit = o; });
+    $('#aPick').value = w.length && firstHit ? firstHit.value : '__new'; $('#aPick').onchange();
+  };
 }
 function moveForm(r, i) {
   const st = r.stops[i], others = S.routes.filter(x => x.plan === r.plan && x.id !== r.id);

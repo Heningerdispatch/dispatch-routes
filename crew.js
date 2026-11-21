@@ -150,13 +150,13 @@ function showPick() {
   // Their usual route(s) in the running snow events, shown first so nobody has to remember.
   const usual = S.active.flatMap(ev => evRoutes(ev).filter(r => (r.members || []).includes(me)).map(r => ({ ev, r })));
   const usualHTML = usual.length
-    ? `<div class="banner info" style="margin-top:6px"><div>Your usual route${usual.length > 1 ? 's' : ''}:</div><div class="pick" style="margin-top:8px">${usual.map(({ ev, r }) =>
+    ? `<div class="banner info" style="margin-top:6px"><div>Your route${usual.length > 1 ? 's' : ''} tonight:</div><div class="pick" style="margin-top:8px">${usual.map(({ ev, r }) =>
         `<button type="button" data-e="${esc(ev.id)}" data-r="${esc(r.id)}" class="mine" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(ev.name || '')} · ${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`).join('')}</div>
         <div class="small muted" style="margin-top:6px">Tap it to start, or pick a different route below if the office moved you tonight.</div></div>`
     : `<div class="banner info" style="margin-top:6px">You don’t have a usual route in tonight’s snow event${S.active.length > 1 ? 's' : ''}. Check with the office which route you’re on, then pick it below.</div>`;
   app.innerHTML = `${searchHTML()}<h2>Which route are you on?</h2>${usualHTML}<h3 style="margin-top:18px">All routes running now</h3>` + S.active.map(ev => {
     const rs = evRoutes(ev);
-    const groups = ['plow', 'drivelanes', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
+    const groups = ['quick', 'plow', 'drivelanes', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
     return `<div class="card" style="padding:10px 12px"><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2><div class="muted small">Started ${esc(dayTime(ev.startMs))}</div>` +
       groups.map(([p, list]) => `<h3>${esc(PLANS[p].label)}</h3><div class="pick">${list.map(r => `<button type="button" data-e="${esc(ev.id)}" data-r="${esc(r.id)}" class="${(r.members || []).includes(me) ? 'mine' : ''}" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`).join('')}</div>`).join('') + '</div>';
   }).join('');

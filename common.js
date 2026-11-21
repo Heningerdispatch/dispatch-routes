@@ -4,7 +4,8 @@ export const PLANS = {
   plow: { label: 'Full plow routes', short: 'Plow' },
   drivelanes: { label: 'Drive lane only routes', short: 'Drive lanes' },
   sidewalk: { label: 'Sidewalk crews', short: 'Sidewalks' },
-  day: { label: 'Day crew', short: 'Day crew' }
+  day: { label: 'Day crew', short: 'Day crew' },
+  quick: { label: 'Quick jobs', short: 'Quick job' }
 };
 export const CREW_DOMAIN = 'crew.dispatch-routes-a9a58.firebaseapp.com';
 export const crewEmail = (personId, gen) => `${personId}.${gen || 1}@${CREW_DOMAIN}`;
