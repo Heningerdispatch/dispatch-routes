@@ -10,7 +10,7 @@ const S = { user: null, ident: null, event: null, active: [], routes: [], people
 const PICK = 'dr-pick';   // {eventId, routeId} chosen on this phone
 const HOME = 'dr-home';   // {eventId, routeId} of their own route while they help on another one
 const crewKey = () => 'dr-crew-' + (S.event && S.event.id) + '-' + (S.route && S.route.id);
-let tick = null, installEvt = null, gotoSite = null, query = '';
+let tick = null, installEvt = null, gotoSite = null, query = '', preview = null;   // preview: a route id being looked at read-only
 
 registerSW();
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
@@ -128,10 +128,12 @@ const evRoutes = ev => !ev ? [] : S.routes.filter(r => !r.archived && !r.hidden 
 /* ---------- Screens ---------- */
 function render() {
   clearInterval(tick); tick = null;
+  if (preview) { if (S.routes.some(r => r.id === preview && viewable(r))) return showPreview(); preview = null; }
   if (!S.active.length) {
     S.event = null; watchVisits();
     $('#title').textContent = 'Dispatch Routes';
-    app.innerHTML = `<div class="card" style="margin-top:20px"><h2>No snow event running</h2><p>The office starts each snow event. When it starts, your route shows here.</p><p class="muted small">Signed in as ${esc(personName(myId()))}.</p></div>`;
+    app.innerHTML = `<div class="card" style="margin-top:20px"><h2>No snow event running</h2><p>The office starts each snow event. When it starts, your route shows here and you can start sites.</p><p class="muted small">Signed in as ${esc(personName(myId()))}.</p></div>` + browseHTML();
+    wireBrowse();
     return;
   }
   const pick = lsGet(PICK, null) || {};
@@ -160,8 +162,44 @@ function showPick() {
     return `<div class="card" style="padding:10px 12px"><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2><div class="muted small">Started ${esc(dayTime(ev.startMs))}</div>` +
       groups.map(([p, list]) => `<h3>${esc(PLANS[p].label)}</h3><div class="pick">${list.map(r => `<button type="button" data-e="${esc(ev.id)}" data-r="${esc(r.id)}" class="${(r.members || []).includes(me) ? 'mine' : ''}" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`).join('')}</div>`).join('') + '</div>';
   }).join('');
-  $$('.pick button').forEach(b => b.onclick = () => { lsSet(PICK, { eventId: b.dataset.e, routeId: b.dataset.r }); lsSet(HOME, null); render(); });
-  wireSearch();
+  app.insertAdjacentHTML('beforeend', `<details class="browse" style="margin-top:18px"><summary><b>Look at other routes</b> <span class="muted small">(view only)</span></summary>${browseHTML(true)}</details>`);
+  $$('.pick button[data-e]').forEach(b => b.onclick = () => { lsSet(PICK, { eventId: b.dataset.e, routeId: b.dataset.r }); lsSet(HOME, null); render(); });
+  wireBrowse(); wireSearch();
+}
+
+/* ---------- View-only routes: crews can look at any published route, no snow event needed ---------- */
+// Not hidden or archived by the office, and not a quick job.
+const viewable = r => !r.archived && !r.hidden && !r.temp && r.plan !== 'quick';
+function browseHTML(bare) {
+  const me = myId(), rs = S.routes.filter(viewable).sort((a, b) => (a.order || 0) - (b.order || 0));
+  if (!rs.length) return '';
+  const btn = r => `<button type="button" data-view="${esc(r.id)}" class="${(r.members || []).includes(me) ? 'mine' : ''}" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`;
+  const mine = rs.filter(r => (r.members || []).includes(me));
+  const groups = ['plow', 'drivelanes', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
+  return `${bare ? '' : '<h2 style="margin-top:20px">Routes</h2><p class="muted small">Look over a route and its sites before the snow starts. You can’t start sites until the office starts a snow event.</p>'}
+    ${mine.length ? `<h3>Your usual route${mine.length > 1 ? 's' : ''}</h3><div class="pick">${mine.map(btn).join('')}</div>` : ''}
+    ${groups.map(([p, list]) => `<h3>${esc(PLANS[p].label)}</h3><div class="pick">${list.map(btn).join('')}</div>`).join('')}`;
+}
+function wireBrowse() { $$('[data-view]').forEach(b => b.onclick = () => { preview = b.dataset.view; window.scrollTo(0, 0); render(); }); }
+function showPreview() {
+  const r = S.routes.find(x => x.id === preview), stops = stopsOf(r);
+  const lo = stops.reduce((t, s) => t + (+s.lo || 0), 0), hi = stops.reduce((t, s) => t + (+(s.hi ?? s.lo) || 0), 0);
+  const live = S.active.length > 0;
+  $('#title').textContent = r.label;
+  app.innerHTML = `<p style="margin:10px 0 6px"><button class="link" id="pvBack" type="button">← ${live ? 'Back to tonight’s routes' : 'All routes'}</button></p>
+    <div class="banner info"><b>View only.</b> ${live ? 'To start sites, go back and pick your route in tonight’s snow event.' : 'You can start sites once the office starts a snow event.'}</div>
+    <div class="card rhead" style="--c:${esc(r.color || '#1d5fa8')}">
+      <h2>${esc(r.label)}</h2>
+      <div class="muted small">${esc(r.area || '')}${(r.members || []).length ? ' · Usual crew: ' + r.members.map(id => esc(personName(id))).join(', ') : ''}</div>
+      <div class="small" style="margin:6px 0">${stops.length} stops${lo ? ` · about ${lo === hi ? lo : lo + '–' + hi} hrs` : ''}${r.machine ? ' · ' + esc(r.machine) : ''}</div>
+      <div class="legs">${legs(stops.map(s => s.site)).map(l => `<a class="btn sm" target="_blank" rel="noopener" href="${esc(l.url)}">Directions ${l.from === 0 ? 'Yard' : l.from}–${l.to} ↗</a>`).join('')}</div>
+    </div>
+    <ol class="stops" style="--c:${esc(r.color || '#1d5fa8')}">${stops.map(s => { const site = s.site;
+      return `<li class="stop"><span class="num">${s.n}</span><div class="body"><div class="nm">${esc(site.name)}</div><div class="owner">${esc(site.owner || '')}</div>
+        ${addrList(site.addresses).length ? `<ul class="addrs">${addrList(site.addresses).map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : ''}${noteHTML(site)}
+        <div class="meta">${hrs(s.lo, s.hi) ? `<span>${hrs(s.lo, s.hi)}</span>` : ''}<a href="${esc(mapLink(site))}" target="_blank" rel="noopener">Map ↗</a>${site.mapFile ? `<a href="maps/${encodeURIComponent(site.mapFile)}" target="_blank" rel="noopener">Site map ↗</a>` : ''}</div></div></li>`; }).join('')}</ol>
+    <div class="yardrow"><span class="num">Y</span><span>Back to ${esc(YARD.name)}</span></div>`;
+  $('#pvBack').onclick = () => { preview = null; window.scrollTo(0, 0); render(); };
 }
 
 function showCrew() {
@@ -353,10 +391,10 @@ $('#menuBtn').onclick = () => {
     ${S.ident && S.ident.role === 'admin' ? '<p><a href="admin.html">Open office dashboard</a></p>' : ''}`;
   $$('[data-m]', b).forEach(x => x.onclick = async () => {
     const m = x.dataset.m; $('#menu').close();
-    if (m === 'route') { lsSet(PICK, null); lsSet(HOME, null); render(); }
+    if (m === 'route') { preview = null; lsSet(PICK, null); lsSet(HOME, null); render(); }
     if (m === 'crew') { lsSet(crewKey(), null); render(); }
     if (m === 'install' && installEvt) { installEvt.prompt(); installEvt = null; }
-    if (m === 'out') backend.signOut();
+    if (m === 'out') { preview = null; backend.signOut(); }
   });
   $('#menu').showModal();
 };
