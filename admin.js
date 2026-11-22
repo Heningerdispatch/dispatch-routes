@@ -148,7 +148,7 @@ function dash(p) {
     return `<section style="margin-bottom:22px"><div class="row" style="justify-content:space-between;margin:6px 0"><div><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2>
         <div class="muted small">${ev.active === true ? '<b style="color:var(--ok)">● Running</b>' : 'Ended ' + esc(dayTime(ev.endMs))} · started ${esc(dayTime(ev.startMs))} by ${esc(first(ev.startedBy))} · ${rs.length} route${rs.length === 1 ? '' : 's'}</div></div>
         <div class="muted"><b>${tot.d} of ${tot.t}</b> sites done · ${tot.o} crew${tot.o === 1 ? '' : 's'} on site now</div></div>
-      ${['quick', 'plow', 'drivelanes', 'sidewalk', 'day'].map(pl => { const l = rs.filter(r => r.plan === pl); if (!l.length) return '';
+      ${['quick', 'plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(pl => { const l = rs.filter(r => r.plan === pl); if (!l.length) return '';
         return `<h3>${esc(PLANS[pl].label)}</h3><div class="grid">${l.map(r => routeCard(r, ev)).join('')}</div>`; }).join('')}</section>`;
   }).join('');
   const bl = $('#backLive'); if (bl) bl.onclick = () => { S.viewEventId = null; drawNow(); };
@@ -243,7 +243,7 @@ function events(p) {
   const run = running(), busy = {};
   for (const e of run) for (const r of evRoutes(e)) busy[r.id] = e;
   const def = 'Snow event – ' + day(Date.now()) + ' ' + t12(Date.now());
-  const plans = ['plow', 'drivelanes', 'sidewalk', 'day'].map(pl => [pl, S.routes.filter(r => r.plan === pl && !r.archived && !r.hidden)]).filter(x => x[1].length);
+  const plans = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(pl => [pl, S.routes.filter(r => r.plan === pl && !r.archived && !r.hidden)]).filter(x => x[1].length);
   const hiddenN = S.routes.filter(r => !r.archived && r.hidden).length;
   p.innerHTML = `${run.length ? `<h2>Running now</h2>${run.map(e => `<div class="card"><div class="row" style="justify-content:space-between"><div><b>${esc(e.name)}</b>
         <div class="muted small">Started ${esc(dayTime(e.startMs))} · ${evRoutes(e).map(r => esc(r.label)).join(', ')}</div></div>
@@ -424,7 +424,7 @@ function routesTab(p) {
         <input id="rsFind" placeholder="Site name, client or address" value="${esc(rsFind)}" autocomplete="off">
         <div id="rsHits">${q ? (hits.map(s => `<div class="stoprow" style="grid-template-columns:minmax(0,1fr) auto"><div><b>${esc(s.name)}</b> <span class="muted small">${esc(s.owner || '')} · ${addrList(s.addresses).map(esc).join(' / ')}</span></div>
           <div class="row">${S.routes.filter(x => !x.archived && (x.stops || []).some(y => y.siteId === s.id)).map(x => `<button class="btn sm" data-open="${esc(x.id)}" type="button" style="border-color:${esc(x.color || '#1d5fa8')}">${esc(PLANS[x.plan].short)} · ${esc(x.label)}</button>`).join('') || '<span class="small muted">Not on any route</span>'}</div></div>`).join('') || '<p class="small muted">No sites match.</p>') : ''}</div></div>` +
-      ['plow', 'drivelanes', 'sidewalk', 'day'].map(pl => {
+      ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(pl => {
         const list = S.routes.filter(x => x.plan === pl && !x.archived);
         const allHidden = list.length && list.every(x => x.hidden);
         return `<div class="row" style="justify-content:space-between;margin-top:14px"><h2 style="margin:0">${esc(PLANS[pl].label)}${allHidden ? ' <span class="flag amber">Hidden from crews</span>' : ''}</h2>

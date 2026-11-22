@@ -158,7 +158,7 @@ function showPick() {
     : `<div class="banner info" style="margin-top:6px">You don’t have a usual route in tonight’s snow event${S.active.length > 1 ? 's' : ''}. Check with the office which route you’re on, then pick it below.</div>`;
   app.innerHTML = `${searchHTML()}<h2>Which route are you on?</h2>${usualHTML}<h3 style="margin-top:18px">All routes running now</h3>` + S.active.map(ev => {
     const rs = evRoutes(ev);
-    const groups = ['quick', 'plow', 'drivelanes', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
+    const groups = ['quick', 'plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
     return `<div class="card" style="padding:10px 12px"><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2><div class="muted small">Started ${esc(dayTime(ev.startMs))}</div>` +
       groups.map(([p, list]) => `<h3>${esc(PLANS[p].label)}</h3><div class="pick">${list.map(r => `<button type="button" data-e="${esc(ev.id)}" data-r="${esc(r.id)}" class="${(r.members || []).includes(me) ? 'mine' : ''}" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`).join('')}</div>`).join('') + '</div>';
   }).join('');
@@ -175,7 +175,7 @@ function browseHTML(bare) {
   if (!rs.length) return '';
   const btn = r => `<button type="button" data-view="${esc(r.id)}" class="${(r.members || []).includes(me) ? 'mine' : ''}" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`;
   const mine = rs.filter(r => (r.members || []).includes(me));
-  const groups = ['plow', 'drivelanes', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
+  const groups = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
   return `${bare ? '' : '<h2 style="margin-top:20px">Routes</h2><p class="muted small">Look over a route and its sites before the snow starts. You can’t start sites until the office starts a snow event.</p>'}
     ${mine.length ? `<h3>Your usual route${mine.length > 1 ? 's' : ''}</h3><div class="pick">${mine.map(btn).join('')}</div>` : ''}
     ${groups.map(([p, list]) => `<h3>${esc(PLANS[p].label)}</h3><div class="pick">${list.map(btn).join('')}</div>`).join('')}`;

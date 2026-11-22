@@ -5,6 +5,7 @@ export const PLANS = {
   drivelanes: { label: 'Drive lane only routes', short: 'Drive lanes' },
   sidewalk: { label: 'Sidewalk crews', short: 'Sidewalks' },
   day: { label: 'Day crew', short: 'Day crew' },
+  sanding: { label: 'Sanding', short: 'Sanding' },
   quick: { label: 'Quick jobs', short: 'Quick job' }
 };
 export const CREW_DOMAIN = 'crew.dispatch-routes-a9a58.firebaseapp.com';
