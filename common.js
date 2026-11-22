@@ -117,3 +117,43 @@ export function visitIndex(visits) {
 export function registerSW() {
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
+
+/* ---------- Route map (Leaflet + OpenStreetMap, loaded only when someone opens a map) ---------- */
+const LEAFLET = 'https://unpkg.com/leaflet@1.9.4/dist/';
+let leafletP = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (!leafletP) leafletP = new Promise((ok, bad) => {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = LEAFLET + 'leaflet.css'; document.head.appendChild(l);
+    const s = document.createElement('script'); s.src = LEAFLET + 'leaflet.js';
+    s.onload = () => ok(window.L); s.onerror = () => { leafletP = null; bad(new Error('no map')); };
+    document.head.appendChild(s);
+  });
+  return leafletP;
+}
+const mapViews = {};   // keeps each map's zoom when the screen redraws
+// stops: [{ n, site, state: 'done' | 'onsite' | 'next' | '' }]. Draws numbered pins in route order, from the yard and back.
+export async function drawRouteMap(el, stops, { key, color = '#1d5fa8' } = {}) {
+  if (!el) return null;
+  let L;
+  try { L = await loadLeaflet(); } catch (e) { el.innerHTML = '<p class="small muted" style="padding:12px">The map needs signal to load. Use the Directions buttons instead.</p>'; return null; }
+  if (!el.isConnected || el._map) return el._map || null;
+  const map = L.map(el, { scrollWheelZoom: false });
+  el._map = map;
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+  const pts = stops.filter(s => s.site && s.site.lat != null && s.site.lon != null);
+  const yard = [YARD.lat, YARD.lon], line = [yard, ...pts.map(s => [s.site.lat, s.site.lon]), yard];
+  L.polyline(line, { color, weight: 3, opacity: 0.75, dashArray: '6 6' }).addTo(map);
+  const pin = (label, bg, ring) => L.divIcon({ className: 'rpin', html: `<span style="background:${bg}${ring ? ';box-shadow:0 0 0 4px ' + ring : ''}">${label}</span>`, iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12] });
+  L.marker(yard, { icon: pin('Y', '#1f2a36') }).addTo(map).bindPopup(`<b>${esc(YARD.name)}</b><br>${esc(YARD.address)}`);
+  pts.forEach(s => {
+    const bg = s.state === 'done' ? '#1e7b45' : s.state === 'onsite' ? '#1d5fa8' : color;
+    L.marker([s.site.lat, s.site.lon], { icon: pin(s.state === 'done' ? '✓' : s.n, bg, s.state === 'next' ? '#f5b301' : ''), zIndexOffset: s.state === 'next' || s.state === 'onsite' ? 1000 : 0 })
+      .addTo(map).bindPopup(`<b>${s.n}. ${esc(s.site.name)}</b>${s.site.owner ? '<br>' + esc(s.site.owner) : ''}<br>${addrList(s.site.addresses).map(esc).join('<br>')}<br><a href="${esc(mapLink(s.site))}" target="_blank" rel="noopener">Open in Maps ↗</a>`);
+  });
+  const v = key && mapViews[key];
+  if (v) map.setView(v.c, v.z); else map.fitBounds(L.latLngBounds(line), { padding: [24, 24] });
+  if (key) map.on('moveend', () => { mapViews[key] = { c: map.getCenter(), z: map.getZoom() }; });
+  setTimeout(() => map.invalidateSize(), 50);
+  return map;
+}

@@ -2,7 +2,7 @@
 import { backend } from './backend.js';
 import {
   $, $$, esc, t12, dur, hrs, addrList, mapLink, legs, getGeo, twoTap, toast, errText, lsGet, lsSet,
-  crewEmail, pinPassword, visitIndex, registerSW, PLANS, YARD, dayTime
+  crewEmail, pinPassword, visitIndex, registerSW, PLANS, YARD, dayTime, drawRouteMap
 } from './common.js';
 
 const app = $('#app');
@@ -167,6 +167,17 @@ function showPick() {
   wireBrowse(); wireSearch();
 }
 
+/* ---------- Route map: open/closed is remembered on this phone ---------- */
+const mapBox = (open, legend) => `<details class="mapbox" ${open ? 'open' : ''}><summary>Route map</summary><div id="rmap" class="rmap"></div>
+  ${legend ? `<div class="maplegend"><span><i style="background:#1e7b45"></i>Done</span><span><i style="background:#1d5fa8"></i>On site</span><span><i style="background:#fff;box-shadow:0 0 0 3px #f5b301"></i>Next</span><span><i style="background:#1f2a36"></i>Yard</span></div>` : ''}</details>`;
+function wireMap(stops, key, color, remember) {
+  const box = $('.mapbox'); if (!box) return;
+  const draw = () => drawRouteMap($('#rmap'), stops, { key, color });
+  let was = box.open;   // the browser also fires 'toggle' for a box drawn open: only a real tap changes the saved choice
+  box.addEventListener('toggle', () => { if (box.open === was) return; was = box.open; if (remember) lsSet('dr-map', box.open); if (box.open) draw(); });
+  if (box.open) draw();
+}
+
 /* ---------- View-only routes: crews can look at any published route, no snow event needed ---------- */
 // Not hidden or archived by the office, and not a quick job.
 const viewable = r => !r.archived && !r.hidden && !r.temp && r.plan !== 'quick';
@@ -193,6 +204,7 @@ function showPreview() {
       <div class="muted small">${esc(r.area || '')}${(r.members || []).length ? ' · Usual crew: ' + r.members.map(id => esc(personName(id))).join(', ') : ''}</div>
       <div class="small" style="margin:6px 0">${stops.length} stops${lo ? ` · about ${lo === hi ? lo : lo + '–' + hi} hrs` : ''}${r.machine ? ' · ' + esc(r.machine) : ''}</div>
       <div class="legs">${legs(stops.map(s => s.site)).map(l => `<a class="btn sm" target="_blank" rel="noopener" href="${esc(l.url)}">Directions ${l.from === 0 ? 'Yard' : l.from}–${l.to} ↗</a>`).join('')}</div>
+      ${mapBox(true, false)}
     </div>
     <ol class="stops" style="--c:${esc(r.color || '#1d5fa8')}">${stops.map(s => { const site = s.site;
       return `<li class="stop"><span class="num">${s.n}</span><div class="body"><div class="nm">${esc(site.name)}</div><div class="owner">${esc(site.owner || '')}</div>
@@ -200,6 +212,7 @@ function showPreview() {
         <div class="meta">${hrs(s.lo, s.hi) ? `<span>${hrs(s.lo, s.hi)}</span>` : ''}<a href="${esc(mapLink(site))}" target="_blank" rel="noopener">Map ↗</a>${site.mapFile ? `<a href="maps/${encodeURIComponent(site.mapFile)}" target="_blank" rel="noopener">Site map ↗</a>` : ''}</div></div></li>`; }).join('')}</ol>
     <div class="yardrow"><span class="num">Y</span><span>Back to ${esc(YARD.name)}</span></div>`;
   $('#pvBack').onclick = () => { preview = null; window.scrollTo(0, 0); render(); };
+  wireMap(stops, 'view-' + r.id, r.color);
 }
 
 function showCrew() {
@@ -239,12 +252,14 @@ function showRoute() {
       <div class="prog"><b>${doneN} of ${stops.length} done</b> <span class="muted small">${open ? '· On site: ' + esc(S.sites[open.siteId] ? S.sites[open.siteId].name : '') : next ? '· Next: ' + esc(next.site.name) : '· Route complete'}</span>
         <div class="bar"><b style="width:${stops.length ? doneN / stops.length * 100 : 0}%"></b></div></div>
       <div class="legs">${legs(stops.map(s => s.site)).map((l, i) => `<a class="btn sm" target="_blank" rel="noopener" href="${esc(l.url)}">Directions ${l.from === 0 ? 'Yard' : l.from}–${l.to} ↗</a>`).join('')}</div>
+      ${mapBox(lsGet('dr-map', false), true)}
     </div>
     ${doneN === stops.length && stops.length ? '<div class="banner ok">✓ All stops done. Head back to the yard.</div>' : ''}
     <ol class="stops" style="--c:${esc(r.color || '#1d5fa8')}">${stops.map(s => stopHTML(s, vOf(s), open, next)).join('')}</ol>
     <div class="yardrow"><span class="num">Y</span><span>Back to ${esc(YARD.name)}</span></div>`;
   window.scrollTo(0, keepScroll);
   wireStops(stops, vOf, open); wireSearch();
+  wireMap(stops.map(s => ({ ...s, state: open && open.siteId === s.siteId ? 'onsite' : isDone(s) ? 'done' : next && next.siteId === s.siteId ? 'next' : '' })), 'run-' + r.id, r.color, true);
   if ($('#goHome')) $('#goHome').onclick = () => { lsSet(PICK, home); lsSet(HOME, null); window.scrollTo(0, 0); render(); };
   if (gotoSite) { const li = $(`li.stop[data-site="${CSS.escape(gotoSite)}"]`); gotoSite = null;
     if (li) { li.scrollIntoView({ block: 'center' }); li.classList.add('flash'); setTimeout(() => li.classList.remove('flash'), 2500); } }

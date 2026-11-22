@@ -2,7 +2,7 @@
 import { backend } from './backend.js';
 import {
   $, $$, esc, t12, day, dayTime, dur, hrs, slug, addrList, mapLink, parseLatLon, twoTap, toast, errText,
-  crewEmail, pinPassword, randPin, visitIndex, geoLink, metres, PLANS, lsGet, lsSet
+  crewEmail, pinPassword, randPin, visitIndex, geoLink, metres, PLANS, lsGet, lsSet, drawRouteMap
 } from './common.js';
 
 const app = $('#app');
@@ -451,7 +451,8 @@ function routesTab(p) {
   const stops = stopsOf(r), crewNames = (r.members || []).map(pname).join(', ');
   $('#rsBody').innerHTML = `<div class="card rhead" style="--c:${esc(r.color || '#1d5fa8')}"><div class="row" style="justify-content:space-between"><div><h2>${esc(r.label)}</h2>
       <div class="muted small">${esc(r.area || '')}${r.machine ? ' · ' + esc(r.machine) : ''} · Crew: ${esc(crewNames || r.crewLabel || 'none set')}</div></div>
-      <button class="btn sm" id="editRoute" type="button">Route settings & crew</button></div></div>
+      <button class="btn sm" id="editRoute" type="button">Route settings & crew</button></div>
+      <details class="mapbox" ${lsGet('dr-admin-map', true) ? 'open' : ''}><summary>Route map</summary><div id="rmap" class="rmap"></div><p class="small muted" style="margin:4px 0 0">Numbers follow the stop order below. Dashed line: the driving order from the yard and back (straight lines, not roads).</p></details></div>
     <div class="card" style="padding:0">${stops.map((s, i) => `<div class="stoprow"><span class="n">${s.n}</span>
       <div><b>${esc(s.site.name)}</b> <span class="muted small">${esc(s.site.owner || '')} · ${addrList(s.site.addresses).map(esc).join(' / ')} ${hrs(s.lo, s.hi) ? '· ' + esc(hrs(s.lo, s.hi)) : ''}</span>
         ${s.site.deadline ? `<span class="flag red">${esc(s.site.deadline)}</span>` : ''}${s.site.pinExact === false ? '<span class="flag amber">pin estimated</span>' : ''}</div>
@@ -467,6 +468,10 @@ function routesTab(p) {
   $$('[data-mv]').forEach(b => b.onclick = () => moveForm(r, +b.dataset.mv));
   $('#addStop').onclick = () => addForm(r);
   $('#editRoute').onclick = () => routeForm(r);
+  const box = $('#rsBody .mapbox'), draw = () => drawRouteMap($('#rmap'), stops, { key: 'office-' + r.id, color: r.color });
+  let was = box.open;
+  box.addEventListener('toggle', () => { if (box.open === was) return; was = box.open; lsSet('dr-admin-map', box.open); if (box.open) draw(); });
+  if (box.open) draw();
 }
 function siteFields(s, st) {
   s = s || {}; st = st || {};

@@ -167,3 +167,13 @@ dialog .df { padding: 12px 16px; border-top: 1px solid var(--line); display: fle
 .sr .row { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px }
 .helpbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between }
 li.stop.flash { outline: 3px solid var(--next); outline-offset: 2px }
+
+/* Route map */
+.mapbox { margin-top: 10px }
+.mapbox summary { cursor: pointer; font-weight: 600; padding: 6px 0 }
+.rmap { height: 380px; border-radius: 10px; border: 1px solid var(--line); margin-top: 6px; background: #e9eef2; z-index: 0 }
+.rpin span { display: flex; width: 28px; height: 28px; border-radius: 50%; align-items: center; justify-content: center; color: #fff;
+  font: 700 12px/1 system-ui, sans-serif; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.45); box-sizing: border-box }
+.maplegend { display: flex; flex-wrap: wrap; gap: 10px; font-size: .8rem; color: var(--muted); margin-top: 6px }
+.maplegend i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 4px; vertical-align: -1px }
+@media print { .mapbox { display: none } }
