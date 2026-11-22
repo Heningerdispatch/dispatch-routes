@@ -310,7 +310,6 @@ async function deleteEvent(eid) {
 }
 
 /* Jody only: change a snow event's name, start and end times, and which routes are in it. */
-const toLocal = ms => { if (!ms) return ''; const d = new Date(ms), z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`; };
 function editEvent(eid) {
   const ev = evById(eid); if (!ev || !canDeleteEvents()) return;
   const cur = new Set(evRoutes(ev).map(r => r.id));
