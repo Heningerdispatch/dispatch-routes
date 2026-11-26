@@ -73,7 +73,7 @@ service cloud.firestore {
         && request.resource.data.status == 'open'
         && request.resource.data.startBy == me()
         && routeRunning(request.resource.data.eventId, request.resource.data.routeId)
-        && request.resource.data.keys().hasOnly(['eventId', 'routeId', 'siteId', 'n', 'status', 'crew', 'startMs', 'startSrv', 'startBy', 'startGeo', 'addrTicks', 'nfMs']));
+        && request.resource.data.keys().hasOnly(['eventId', 'routeId', 'siteId', 'n', 'status', 'crew', 'startMs', 'startSrv', 'startBy', 'startGeo', 'addrTicks', 'nfMs', 'weather']));
       allow update: if isAdmin() || (isCrew()
         && resource.data.status == 'open'
         && request.resource.data.status in ['open', 'done', 'cancelled']

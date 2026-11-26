@@ -6,7 +6,8 @@ export const PLANS = {
   sidewalk: { label: 'Sidewalk crews', short: 'Sidewalks' },
   day: { label: 'Day crew', short: 'Day crew' },
   sanding: { label: 'Sanding', short: 'Sanding' },
-  quick: { label: 'Quick jobs', short: 'Quick job' }
+  quick: { label: 'Quick jobs', short: 'Quick job' },
+  checks: { label: 'Site checks', short: 'Site check' }
 };
 export const CREW_DOMAIN = 'crew.dispatch-routes-a9a58.firebaseapp.com';
 export const crewEmail = (personId, gen) => `${personId}.${gen || 1}@${CREW_DOMAIN}`;
@@ -48,6 +49,45 @@ export function parseLatLon(text) {
   if (!m) return null;
   const lat = +m[1], lon = +m[2];
   return (lat > 40 && lat < 60 && lon < -100 && lon > -125) ? { lat, lon } : null;
+}
+
+/* Weather stamp from Environment Canada (free, open data): current conditions at the nearest reporting city
+   (Calgary, Cochrane, Strathmore, Airdrie…). Never blocks the crew: resolves an object or null within ~7 s. */
+const WX_URL = 'https://api.weather.gc.ca/collections/citypageweather-realtime/items';
+let wxCache = null;   // { at, lat, lon, wx } – one lookup covers about 10 minutes nearby
+const wxVal = x => { for (let i = 0; i < 4 && x && typeof x === 'object'; i++) x = 'value' in x ? x.value : 'en' in x ? x.en : x; return x == null || typeof x === 'object' || x === '' ? null : x; };
+const wxNum = x => { const v = wxVal(x); return v == null || isNaN(+v) ? null : +v; };
+export async function getWeather(lat, lon) {
+  if (lat == null || lon == null || !navigator.onLine) return null;
+  if (wxCache && Date.now() - wxCache.at < 10 * 60e3 && Math.abs(wxCache.lat - lat) < 0.1 && Math.abs(wxCache.lon - lon) < 0.1) return wxCache.wx;
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 7000);
+  try {
+    const bbox = [lon - 0.8, lat - 0.5, lon + 0.8, lat + 0.5].map(n => n.toFixed(3)).join(',');
+    const res = await fetch(`${WX_URL}?f=json&lang=en&limit=20&bbox=${bbox}`, { signal: ctl.signal });
+    if (!res.ok) return null;
+    const feats = ((await res.json()).features || []).filter(f => f.properties && f.properties.currentConditions && wxNum(f.properties.currentConditions.temperature) != null);
+    if (!feats.length) return null;
+    const dist = f => { const c = (f.geometry || {}).coordinates || [999, 999]; return (c[0] - lon) ** 2 + (c[1] - lat) ** 2; };
+    const f = feats.sort((a, b) => dist(a) - dist(b))[0], p = f.properties, cc = p.currentConditions, w = cc.wind || {};
+    const wx = {
+      t: wxNum(cc.temperature), cond: wxVal(cc.condition) || '', chill: wxNum(cc.windChill), hum: wxNum(cc.relativeHumidity),
+      wind: wxNum(w.speed), gust: wxNum(w.gust), dir: wxVal(w.direction) || '',
+      place: wxVal(p.name) || '', obs: wxVal(cc.timestamp) || '', src: 'Environment Canada'
+    };
+    Object.keys(wx).forEach(k => { if (wx[k] == null || wx[k] === '') delete wx[k]; });
+    wxCache = { at: Date.now(), lat, lon, wx };
+    return wx;
+  } catch (e) { return null; } finally { clearTimeout(t); }
+}
+/* "-8°C · Light Snow · wind chill -15 · wind NW 20 km/h (gusts 35)". short: just temperature and condition. */
+export function wxText(w, short) {
+  if (!w || w.t == null) return '';
+  const parts = [`${Math.round(w.t)}°C`]; if (w.cond) parts.push(w.cond);
+  if (short) return parts.join(' ');
+  if (w.chill != null) parts.push(`wind chill ${Math.round(w.chill)}`);
+  if (w.wind != null) parts.push(`wind ${w.dir ? w.dir + ' ' : ''}${w.wind} km/h${w.gust ? ` (gusts ${w.gust})` : ''}`);
+  if (w.hum != null) parts.push(`humidity ${w.hum}%`);
+  return parts.join(' · ');
 }
 
 /* GPS: never blocks the crew. Resolves {lat, lon, acc} or null within ~8 s. */

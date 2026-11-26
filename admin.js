@@ -2,7 +2,7 @@
 import { backend } from './backend.js';
 import {
   $, $$, esc, t12, day, dayTime, dur, hrs, slug, addrList, mapLink, parseLatLon, twoTap, toast, errText,
-  crewEmail, pinPassword, randPin, visitIndex, geoLink, metres, PLANS, lsGet, lsSet, drawRouteMap, YARD, siteQ
+  crewEmail, pinPassword, randPin, visitIndex, geoLink, metres, PLANS, lsGet, lsSet, drawRouteMap, YARD, siteQ, wxText
 } from './common.js';
 
 const app = $('#app');
@@ -148,7 +148,7 @@ function dash(p) {
     return `<section style="margin-bottom:22px"><div class="row" style="justify-content:space-between;margin:6px 0"><div><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2>
         <div class="muted small">${ev.active === true ? '<b style="color:var(--ok)">● Running</b>' : 'Ended ' + esc(dayTime(ev.endMs))} · started ${esc(dayTime(ev.startMs))} by ${esc(first(ev.startedBy))} · ${rs.length} route${rs.length === 1 ? '' : 's'}</div></div>
         <div class="muted"><b>${tot.d} of ${tot.t}</b> sites done · ${tot.o} crew${tot.o === 1 ? '' : 's'} on site now</div></div>
-      ${['quick', 'plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(pl => { const l = rs.filter(r => r.plan === pl); if (!l.length) return '';
+      ${['quick', 'plow', 'drivelanes', 'sanding', 'sidewalk', 'day', 'checks'].map(pl => { const l = rs.filter(r => r.plan === pl); if (!l.length) return '';
         return `<h3>${esc(PLANS[pl].label)}</h3><div class="grid">${l.map(r => routeCard(r, ev)).join('')}</div>`; }).join('')}</section>`;
   }).join('');
   const bl = $('#backLive'); if (bl) bl.onclick = () => { S.viewEventId = null; drawNow(); };
@@ -168,8 +168,9 @@ function dashHits(list) {
       const vs = visitsOf(ev.id).filter(v => v.routeId === r.id && v.siteId === s.id && v.status !== 'cancelled').sort((a, b) => a.startMs - b.startMs);
       const open = vs.find(v => v.status === 'open'), done = vs.filter(v => v.status === 'done');
       const who = v => esc((v.crew || [v.startBy]).map(first).join(', '));
-      const status = open ? `<b style="color:var(--accent)">On site</b> since ${t12(open.startMs)} (${dur(Date.now() - open.startMs)}) · ${who(open)}`
-        : done.length ? done.map((v, i) => `<b style="color:var(--ok)">✓ ${done.length > 1 ? 'Visit ' + (i + 1) : 'Done'}</b> ${t12(v.startMs)}–${t12(v.endMs)} · ${dur(v.endMs - v.startMs)} · ${who(v)}`).join('<br>')
+      const wx = v => v.weather ? ' · ' + esc(wxText(v.weather, true)) : '';
+      const status = open ? `<b style="color:var(--accent)">On site</b> since ${t12(open.startMs)} (${dur(Date.now() - open.startMs)}) · ${who(open)}${wx(open)}`
+        : done.length ? done.map((v, i) => `<b style="color:var(--ok)">✓ ${done.length > 1 ? 'Visit ' + (i + 1) : 'Done'}</b> ${t12(v.startMs)}–${t12(v.endMs)} · ${dur(v.endMs - v.startMs)} · ${who(v)}${wx(v)}`).join('<br>')
         : '<span class="muted">Not started</span>';
       return `<div class="row" style="justify-content:space-between;gap:8px;border-left:5px solid ${esc(r.color || '#1d5fa8')};padding:4px 0 4px 8px;margin-top:4px">
         <div class="small"><b>${esc(r.label)}</b>${list.length > 1 ? ' <span class="muted">· ' + esc(ev.name || '') + '</span>' : ''}<br>${status}</div>
@@ -205,7 +206,7 @@ function visitLine(v, site) {
   const d = metres(site, v.startGeo); if (d != null && d > FAR_M) fl.push(`<span class="flag amber">started ${d > 1500 ? (d / 1000).toFixed(1) + ' km' : d + ' m'} from site</span>`);
   if (v.editedBy) fl.push(`<span class="flag green">edited by ${esc(first(v.editedBy))}</span>`);
   return `${t12(v.startMs)}–${v.endMs ? t12(v.endMs) : '…'} ${v.endMs ? '· ' + dur(v.endMs - v.startMs) : ''} · ${esc((v.crew || [v.startBy]).map(first).join(', '))}
-    ${v.nfMs ? ' · Nektar & FLHA ✓' : ''} ${v.startGeo ? `· <a href="${geoLink(v.startGeo)}" target="_blank" rel="noopener">start GPS</a>` : ''} ${v.endGeo ? `<a href="${geoLink(v.endGeo)}" target="_blank" rel="noopener">end GPS</a>` : ''} ${fl.join('')}`;
+    ${v.weather ? ' · 🌡 ' + esc(wxText(v.weather)) : ''}${v.nfMs ? ' · Nektar & FLHA ✓' : ''} ${v.startGeo ? `· <a href="${geoLink(v.startGeo)}" target="_blank" rel="noopener">start GPS</a>` : ''} ${v.endGeo ? `<a href="${geoLink(v.endGeo)}" target="_blank" rel="noopener">end GPS</a>` : ''} ${fl.join('')}`;
 }
 function routeDetail(rid, eid) {
   const r = S.routes.find(x => x.id === rid), ev = evById(eid); if (!r || !ev) return;
@@ -243,7 +244,7 @@ function events(p) {
   const run = running(), busy = {};
   for (const e of run) for (const r of evRoutes(e)) busy[r.id] = e;
   const def = 'Snow event – ' + day(Date.now()) + ' ' + t12(Date.now());
-  const plans = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(pl => [pl, S.routes.filter(r => r.plan === pl && !r.archived && !r.hidden)]).filter(x => x[1].length);
+  const plans = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day', 'checks'].map(pl => [pl, S.routes.filter(r => r.plan === pl && !r.archived && !r.hidden)]).filter(x => x[1].length);
   const hiddenN = S.routes.filter(r => !r.archived && r.hidden).length;
   p.innerHTML = `${run.length ? `<h2>Running now</h2>${run.map(e => `<div class="card"><div class="row" style="justify-content:space-between"><div><b>${esc(e.name)}</b>
         <div class="muted small">Started ${esc(dayTime(e.startMs))} · ${evRoutes(e).map(r => esc(r.label)).join(', ')}</div></div>
@@ -453,7 +454,7 @@ function wireAdRows(p) {
   const more = $('#adMore', p); if (more) more.onclick = () => { adMax += 100; $('#adRows').innerHTML = adRowsHTML(); wireAdRows(p); };
 }
 function sitesTab(p) {
-  const plans = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].filter(pl => S.routes.some(r => r.plan === pl && !r.archived));
+  const plans = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day', 'checks'].filter(pl => S.routes.some(r => r.plan === pl && !r.archived));
   const total = Object.keys(S.sites).length, loose = Object.values(S.sites).filter(s => !routesOfSite(s.id).length).length;
   const chip = (v, l) => `<button class="btn sm ${adPlan === v ? 'primary' : ''}" data-adplan="${v}" type="button">${esc(l)}</button>`;
   p.innerHTML = `<div class="card noprint"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Addresses</h2><span class="muted small">${total} sites · ${loose} not on a route</span></div>
@@ -570,10 +571,10 @@ function reports(p) {
   const body = () => {
     const rows = reportRows(ev, $('#rrt').value), doneN = rows.filter(x => x.v && x.v.status === 'done').length;
     $('#rbody').innerHTML = `<h2>${esc(ev.name)}</h2><p class="muted">Started ${esc(dayTime(ev.startMs))}${ev.endMs ? ' · ended ' + esc(dayTime(ev.endMs)) : ''} · ${doneN} completed visits · ${rows.filter(x => !x.v).length} sites not done</p>
-      <div class="tscroll"><table class="t"><thead><tr><th>Route</th><th>#</th><th>Site</th><th>Address(es)</th><th>Visit</th><th>Start</th><th>Complete</th><th>Time on site</th><th>Planned</th><th>Crew</th><th>Nektar &amp; FLHA</th><th>GPS</th><th>Flags</th></tr></thead><tbody>
+      <div class="tscroll"><table class="t"><thead><tr><th>Route</th><th>#</th><th>Site</th><th>Address(es)</th><th>Visit</th><th>Start</th><th>Complete</th><th>Time on site</th><th>Planned</th><th>Weather at start</th><th>Crew</th><th>Nektar &amp; FLHA</th><th>GPS</th><th>Flags</th></tr></thead><tbody>
       ${rows.map(({ r, s, v }) => `<tr style="${v ? '' : 'background:var(--warn-bg)'}"><td>${esc(r.label)}</td><td>${s.n}</td><td><b>${esc(s.site.name)}</b></td><td>${addrList(s.site.addresses).map(esc).join('<br>')}</td>
         <td>${v ? v.n || 1 : ''}</td><td>${v ? esc(dayTime(v.startMs)) : ''}</td><td>${v && v.endMs ? esc(dayTime(v.endMs)) : ''}</td><td>${v && v.endMs ? dur(v.endMs - v.startMs) : ''}</td><td>${esc(hrs(s.lo, s.hi))}</td>
-        <td>${v ? esc((v.crew || []).map(first).join(', ')) : ''}</td><td>${v && v.nfMs ? 'Confirmed' : ''}</td>
+        <td>${v && v.weather ? esc(wxText(v.weather)) : ''}</td><td>${v ? esc((v.crew || []).map(first).join(', ')) : ''}</td><td>${v && v.nfMs ? 'Confirmed' : ''}</td>
         <td>${v && v.startGeo ? `<a href="${geoLink(v.startGeo)}" target="_blank" rel="noopener">start</a>` : ''} ${v && v.endGeo ? `<a href="${geoLink(v.endGeo)}" target="_blank" rel="noopener">end</a>` : ''}</td>
         <td>${esc(rowFlags(s, v))}</td></tr>`).join('')}</tbody></table></div>`;
   };
@@ -581,9 +582,11 @@ function reports(p) {
   $('#rprint').onclick = () => window.print();
   $('#rcsv').onclick = () => {
     const rows = reportRows(ev, $('#rrt').value), q = x => `"${String(x ?? '').replace(/"/g, '""')}"`;
-    const out = [['Snow event', 'Route', 'Stop #', 'Site', 'Client', 'Address(es)', 'Visit #', 'Start', 'Complete', 'Minutes on site', 'Planned hrs', 'Crew', 'Nektar & FLHA', 'Start GPS', 'Complete GPS', 'Flags'].map(q).join(',')];
+    const out = [['Snow event', 'Route', 'Stop #', 'Site', 'Client', 'Address(es)', 'Visit #', 'Start', 'Complete', 'Minutes on site', 'Planned hrs', 'Temp (°C)', 'Condition', 'Wind chill', 'Wind (km/h)', 'Weather station', 'Crew', 'Nektar & FLHA', 'Start GPS', 'Complete GPS', 'Flags'].map(q).join(',')];
     for (const { r, s, v } of rows) out.push([ev.name, r.label, s.n, s.site.name, s.site.owner, addrList(s.site.addresses).join(' / '), v ? v.n || 1 : '', v ? dayTime(v.startMs) : '', v && v.endMs ? dayTime(v.endMs) : '',
-      v && v.endMs ? Math.round((v.endMs - v.startMs) / 60000) : '', hrs(s.lo, s.hi), v ? (v.crew || []).map(pname).join(', ') : '', v && v.nfMs ? 'Confirmed' : '',
+      v && v.endMs ? Math.round((v.endMs - v.startMs) / 60000) : '', hrs(s.lo, s.hi),
+      ...(w => [w.t ?? '', w.cond || '', w.chill ?? '', w.wind != null ? `${w.dir ? w.dir + ' ' : ''}${w.wind}${w.gust ? ' gust ' + w.gust : ''}` : '', w.place ? 'Env. Canada – ' + w.place : ''])((v && v.weather) || {}),
+      v ? (v.crew || []).map(pname).join(', ') : '', v && v.nfMs ? 'Confirmed' : '',
       v && v.startGeo ? `${v.startGeo.lat},${v.startGeo.lon}` : '', v && v.endGeo ? `${v.endGeo.lat},${v.endGeo.lon}` : '', rowFlags(s, v)].map(q).join(','));
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + out.join('\r\n')], { type: 'text/csv' }));
     a.download = `${fileSafe(ev.name)}${$('#rrt').value ? ' - ' + fileSafe($('#rrt').selectedOptions[0].textContent) : ''}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
@@ -605,7 +608,7 @@ function routeOverviewCard(r) {
     <p class="row" style="margin:8px 0 0"><button class="btn sm" type="button" data-open="${esc(r.id)}">Open route</button><button class="btn sm" type="button" data-hide="${esc(r.id)}">${r.hidden ? 'Show to crews' : 'Hide'}</button></p></div>`;
 }
 /* ---------- All-routes map on Routes & sites: every route's sites in its route colour, filtered by type ---------- */
-const MAP_PLANS = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'];
+const MAP_PLANS = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day', 'checks'];
 let allMapView = null;
 function allMapHTML() {
   const cur = lsGet('dr-allmap-plan', 'plow'), open = lsGet('dr-allmap-open', true);
@@ -674,7 +677,7 @@ function routesTab(p) {
         <input id="rsFind" placeholder="Site name, client or address" value="${esc(rsFind)}" autocomplete="off">
         <div id="rsHits">${q ? (hits.map(s => `<div class="stoprow" style="grid-template-columns:minmax(0,1fr) auto"><div><b>${esc(s.name)}</b> <span class="muted small">${esc(s.owner || '')} · ${addrList(s.addresses).map(esc).join(' / ')}</span></div>
           <div class="row">${S.routes.filter(x => !x.archived && (x.stops || []).some(y => y.siteId === s.id)).map(x => `<button class="btn sm" data-open="${esc(x.id)}" type="button" style="border-color:${esc(x.color || '#1d5fa8')}">${esc(PLANS[x.plan].short)} · ${esc(x.label)}</button>`).join('') || '<span class="small muted">Not on any route</span>'}</div></div>`).join('') || '<p class="small muted">No sites match.</p>') : ''}</div></div>` + allMapHTML() +
-      ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(pl => {
+      ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day', 'checks'].map(pl => {
         const list = S.routes.filter(x => x.plan === pl && !x.archived);
         const allHidden = list.length && list.every(x => x.hidden);
         return `<div class="row" style="justify-content:space-between;margin-top:14px"><h2 style="margin:0">${esc(PLANS[pl].label)}${allHidden ? ' <span class="flag amber">Hidden from crews</span>' : ''}</h2>

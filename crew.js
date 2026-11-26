@@ -2,7 +2,7 @@
 import { backend } from './backend.js';
 import {
   $, $$, esc, t12, dur, hrs, addrList, mapLink, legs, getGeo, twoTap, toast, errText, lsGet, lsSet,
-  crewEmail, pinPassword, visitIndex, registerSW, PLANS, YARD, dayTime, drawRouteMap
+  crewEmail, pinPassword, visitIndex, registerSW, PLANS, YARD, dayTime, drawRouteMap, getWeather, wxText
 } from './common.js';
 
 const app = $('#app');
@@ -114,6 +114,35 @@ function watchVisits() {
   });
   S.unsubs.push(() => { if (visitUnsub) visitUnsub(); visitUnsub = null; visitFor = null; });
 }
+/* Site checks: a check route shows how the crews did each of its sites in the last 24 hours, in any snow event. */
+const CHECK_MS = 24 * 3600e3;
+let recentUnsub = null, recent = [], recentSig = null;
+function watchRecent(on) {
+  if (!on) { if (recentUnsub) { recentUnsub(); recentUnsub = null; } recent = []; recentSig = null; return; }
+  if (recentUnsub) return;
+  recentUnsub = backend.watchList('visits', [['startMs', '>=', Date.now() - CHECK_MS]], vs => {
+    recent = vs;
+    const sig = JSON.stringify(vs.map(v => [v.id, v.status, v.endMs]).sort());
+    if (sig !== recentSig) { recentSig = sig; if (S.route && S.route.plan === 'checks') render(); }
+  });
+  S.unsubs.push(() => { if (recentUnsub) recentUnsub(); recentUnsub = null; recent = []; recentSig = null; });
+}
+// Crew work on a site, newest first: not check visits, not cancelled.
+function crewWork(siteId) {
+  const isCheck = rid => (S.routes.find(r => r.id === rid) || {}).plan === 'checks';
+  return recent.filter(v => v.siteId === siteId && v.status !== 'cancelled' && !isCheck(v.routeId) && v.startMs >= Date.now() - CHECK_MS)
+    .sort((a, b) => (b.endMs || b.startMs) - (a.endMs || a.startMs));
+}
+function crewWorkHTML(siteId) {
+  const vs = crewWork(siteId);
+  if (!vs.length) return '<div class="cw none">Crews: not done in the last 24 hrs</div>';
+  const rname = id => (S.routes.find(r => r.id === id) || {}).label || 'another route';
+  return vs.slice(0, 3).map(v => v.status === 'open'
+    ? `<div class="cw on">● Crew on site now: ${esc(rname(v.routeId))} since ${t12(v.startMs)} · ${esc((v.crew || []).map(id => personName(id).split(' ')[0]).join(', '))}</div>`
+    : `<div class="cw done">✓ Crew done ${esc(dayTime(v.endMs))} (${dur(Date.now() - v.endMs)} ago) · ${esc(rname(v.routeId))} · ${esc((v.crew || []).map(id => personName(id).split(' ')[0]).join(', '))}${v.weather ? ' · ' + esc(wxText(v.weather, true)) : ''}</div>`).join('');
+}
+let checkFilter = lsGet('dr-check-filter', 'all');
+
 function netBadge() {
   const n = $('#net'); if (!n) return;
   const pend = S.visitsMeta && S.visitsMeta.pending;
@@ -158,7 +187,7 @@ function showPick() {
     : `<div class="banner info" style="margin-top:6px">You don’t have a usual route in tonight’s snow event${S.active.length > 1 ? 's' : ''}. Check with the office which route you’re on, then pick it below.</div>`;
   app.innerHTML = `${searchHTML()}<h2>Which route are you on?</h2>${usualHTML}<h3 style="margin-top:18px">All routes running now</h3>` + S.active.map(ev => {
     const rs = evRoutes(ev);
-    const groups = ['quick', 'plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
+    const groups = ['quick', 'plow', 'drivelanes', 'sanding', 'sidewalk', 'day', 'checks'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
     return `<div class="card" style="padding:10px 12px"><h2 style="margin:0">${esc(ev.name || 'Snow event')}</h2><div class="muted small">Started ${esc(dayTime(ev.startMs))}</div>` +
       groups.map(([p, list]) => `<h3>${esc(PLANS[p].label)}</h3><div class="pick">${list.map(r => `<button type="button" data-e="${esc(ev.id)}" data-r="${esc(r.id)}" class="${(r.members || []).includes(me) ? 'mine' : ''}" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`).join('')}</div>`).join('') + '</div>';
   }).join('');
@@ -186,7 +215,7 @@ function browseHTML(bare) {
   if (!rs.length) return '';
   const btn = r => `<button type="button" data-view="${esc(r.id)}" class="${(r.members || []).includes(me) ? 'mine' : ''}" style="--c:${esc(r.color || '#1d5fa8')}"><b>${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''}</b><small>${esc(r.area || '')} · ${(r.stops || []).length} stops</small></button>`;
   const mine = rs.filter(r => (r.members || []).includes(me));
-  const groups = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
+  const groups = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day', 'checks'].map(p => [p, rs.filter(r => r.plan === p)]).filter(g => g[1].length);
   return `${bare ? '' : '<h2 style="margin-top:20px">Routes</h2><p class="muted small">Look over a route and its sites before the snow starts. You can’t start sites until the office starts a snow event.</p>'}
     ${mine.length ? `<h3>Your usual route${mine.length > 1 ? 's' : ''}</h3><div class="pick">${mine.map(btn).join('')}</div>` : ''}
     ${groups.map(([p, list]) => `<h3>${esc(PLANS[p].label)}</h3><div class="pick">${list.map(btn).join('')}</div>`).join('')}`;
@@ -243,7 +272,12 @@ function showRoute() {
   const open = S.visits.find(v => v.routeId === r.id && v.status === 'open');
   const isDone = s => vOf(s).some(v => v.status === 'done');
   const doneN = stops.filter(isDone).length;
-  const next = stops.find(s => !isDone(s) && !(open && open.siteId === s.siteId));
+  const checks = r.plan === 'checks'; watchRecent(checks);
+  const crewDone = s => crewWork(s.siteId).some(v => v.status === 'done');
+  const next = stops.find(s => !isDone(s) && !(open && open.siteId === s.siteId) && (!checks || checkFilter !== 'done' || crewDone(s)));
+  const shown = !checks || checkFilter === 'all' ? stops : stops.filter(s => checkFilter === 'done' ? crewDone(s) : !crewDone(s));
+  const checkBar = checks ? `<div class="card" style="padding:10px 12px"><b>Site checks</b> <span class="muted small">· crews have finished ${stops.filter(crewDone).length} of ${stops.length} of your sites in the last 24 hrs</span>
+      <div class="row" style="margin-top:8px;gap:6px">${[['all', 'All my sites'], ['done', 'Crews done – ready to check'], ['todo', 'Crews not done yet']].map(([k, l]) => `<button class="btn sm ${checkFilter === k ? 'primary' : ''}" data-cf="${k}" type="button">${l}</button>`).join('')}</div></div>` : '';
   $('#title').textContent = r.label;
   const keepScroll = window.scrollY, home = lsGet(HOME, null), homeR = isHelping() && S.routes.find(x => x.id === home.routeId);
   app.innerHTML = `${searchHTML()}${isHelping() ? `<div class="banner info helpbar"><span>You’re doing a site on <b>${esc(r.label)}</b>.</span>${homeR ? `<button class="btn sm" id="goHome" type="button">← Back to ${esc(homeR.label)}</button>` : ''}</div>` : ''}<div class="card rhead" style="--c:${esc(r.color || '#1d5fa8')}">
@@ -253,12 +287,13 @@ function showRoute() {
         <div class="bar"><b style="width:${stops.length ? doneN / stops.length * 100 : 0}%"></b></div></div>
       <div class="legs">${legs(stops.map(s => s.site)).map((l, i) => `<a class="btn sm" target="_blank" rel="noopener" href="${esc(l.url)}">Directions ${l.from === 0 ? 'Yard' : l.from}–${l.to} ↗</a>`).join('')}</div>
     </div>
-    ${doneN === stops.length && stops.length ? '<div class="banner ok">✓ All stops done. Head back to the yard.</div>' : ''}
-    <ol class="stops" style="--c:${esc(r.color || '#1d5fa8')}">${stops.map(s => stopHTML(s, vOf(s), open, next)).join('')}</ol>
+    ${doneN === stops.length && stops.length ? '<div class="banner ok">✓ All stops done. Head back to the yard.</div>' : ''}${checkBar}
+    <ol class="stops" style="--c:${esc(r.color || '#1d5fa8')}">${shown.map(s => stopHTML(s, vOf(s), open, next, checks)).join('') || '<p class="muted" style="padding:10px">No sites in this list right now.</p>'}</ol>
     <div class="yardrow"><span class="num">Y</span><span>Back to ${esc(YARD.name)}</span></div>
     ${mapBox(lsGet('dr-map-bottom', true), true)}`;
   window.scrollTo(0, keepScroll);
   wireStops(stops, vOf, open); wireSearch();
+  $$('[data-cf]').forEach(b => b.onclick = () => { checkFilter = b.dataset.cf; lsSet('dr-check-filter', checkFilter); render(); });
   wireMap(stops.map(s => ({ ...s, state: open && open.siteId === s.siteId ? 'onsite' : isDone(s) ? 'done' : next && next.siteId === s.siteId ? 'next' : '' })), 'run-' + r.id, r.color, true);
   if ($('#goHome')) $('#goHome').onclick = () => { lsSet(PICK, home); lsSet(HOME, null); window.scrollTo(0, 0); render(); };
   if (gotoSite) { const li = $(`li.stop[data-site="${CSS.escape(gotoSite)}"]`); gotoSite = null;
@@ -276,7 +311,7 @@ function noteHTML(site) {
   return rows.length ? `<div class="notes">${rows.join('')}</div>` : '';
 }
 
-function stopHTML(s, vs, open, next) {
+function stopHTML(s, vs, open, next, checks) {
   const site = s.site, adr = addrList(site.addresses), multi = adr.length > 1;
   const mine = open && open.siteId === s.siteId ? open : null;
   const done = vs.filter(v => v.status === 'done');
@@ -295,12 +330,12 @@ function stopHTML(s, vs, open, next) {
   let act = '';
   if (mine) {
     const left = multi ? adr.filter((a, i) => !ticks[i]).length : 0, nf = !!mine.nfMs;
-    act = `<div class="onsince">On site since ${t12(mine.startMs)} · <span data-since="${mine.startMs}">${dur(Date.now() - mine.startMs)}</span></div>
+    act = `<div class="onsince">On site since ${t12(mine.startMs)} · <span data-since="${mine.startMs}">${dur(Date.now() - mine.startMs)}</span></div>${mine.weather ? `<div class="small muted">🌡 ${esc(wxText(mine.weather))}</div>` : ''}
       <label class="conf ${nf ? 'got' : ''}" data-nf role="checkbox" tabindex="0" aria-checked="${nf}"><span class="box">${nf ? '✓' : ''}</span>Nektar Task &amp; FLHA</label>
       <div class="acts"><button type="button" class="btn ${left || !nf ? '' : 'go'} full" data-complete ${left || !nf ? 'disabled' : ''}>${left ? `Tick ${left === adr.length ? 'all ' + left : left + ' more'} address${left > 1 ? 'es' : ''}` : !nf ? 'Confirm Nektar Task & FLHA' : 'Complete site'}</button>
       <button type="button" class="link" data-cancel>Started by mistake? Cancel this visit</button></div>`;
   } else {
-    const lines = done.map((v, i) => `<div>✓ ${done.length > 1 ? 'Visit ' + (i + 1) + ': ' : 'Done '}${t12(v.startMs)}–${t12(v.endMs)} · ${dur(v.endMs - v.startMs)}</div>`).join('');
+    const lines = done.map((v, i) => `<div>✓ ${done.length > 1 ? 'Visit ' + (i + 1) + ': ' : 'Done '}${t12(v.startMs)}–${t12(v.endMs)} · ${dur(v.endMs - v.startMs)}${v.weather ? ` · ${esc(wxText(v.weather, true))}` : ''}</div>`).join('');
     const blocked = open ? `Finish ${esc((S.sites[open.siteId] || {}).name || 'the open site')} first` : '';
     act = (lines ? `<div class="visits">${lines}</div>` : '') +
       (done.length ? `<div class="acts"><button type="button" class="link" data-start ${open ? 'disabled' : ''}>${open ? blocked : '+ Start another visit'}</button></div>`
@@ -308,7 +343,7 @@ function stopHTML(s, vs, open, next) {
   }
   return `<li class="stop ${cls}" data-site="${esc(s.siteId)}"><span class="num">${done.length && !mine ? '✓' : s.n}</span><div class="body">
     <div class="nm">${esc(site.name)}${tag}</div><div class="owner">${esc(site.owner || '')}</div>
-    ${addrs}${noteHTML(site)}
+    ${checks ? `<div class="cws">${crewWorkHTML(s.siteId)}</div>` : ''}${addrs}${noteHTML(site)}
     <div class="meta">${hrs(s.lo, s.hi) ? `<span>${hrs(s.lo, s.hi)}</span>` : ''}<a href="${esc(mapLink(site))}" target="_blank" rel="noopener">Map ↗</a>${site.mapFile ? `<a href="maps/${encodeURIComponent(site.mapFile)}" target="_blank" rel="noopener">Site map ↗</a>` : ''}</div>
     ${act}</div></li>`;
 }
@@ -346,14 +381,19 @@ function wireStops(stops, vOf, open) {
 
 async function startVisit(s, vs) {
   const btn = $(`li.stop[data-site="${CSS.escape(s.siteId)}"] [data-start]`);
-  if (btn) { btn.disabled = true; btn.textContent = 'Starting… getting GPS'; }
-  const startMs = Date.now(), geo = await getGeo();
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting… getting GPS and weather'; }
+  const startMs = Date.now();
+  // GPS and the weather stamp are fetched at the same time, so Start takes no longer than before.
+  const pin = s.site.lat != null ? s.site : YARD;
+  const [geo, wx] = await Promise.all([getGeo(), getWeather(pin.lat, pin.lon)]);
   const id = backend.newId('visits');
   const adr = addrList(s.site.addresses);
-  save(backend.set('visits/' + id, {
+  const data = {
     eventId: S.event.id, routeId: S.route.id, siteId: s.siteId, n: vs.filter(v => v.status === 'done').length + 1, status: 'open',
     crew: S.crew, startMs, startSrv: backend.serverTime(), startBy: myId(), startGeo: geo, addrTicks: adr.length > 1 ? adr.map(() => false) : [], nfMs: null
-  }));
+  };
+  if (wx) data.weather = wx;
+  save(backend.set('visits/' + id, data));
 }
 function save(p) { if (p && p.catch) p.catch(e => toast(errText(e), 'bad')); }
 
