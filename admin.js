@@ -279,39 +279,54 @@ function events(p) {
     const ev = evById(b.dataset.end);
     // A quick job's route is only for that job: put it away when the job ends (it stays in that event's report).
     const temp = S.routes.filter(r => r.temp && (ev.routes || []).includes(r.id)).map(r => ({ op: 'update', path: 'routes/' + r.id, data: { archived: true } }));
-    try { await backend.batch([{ op: 'update', path: 'events/' + b.dataset.end, data: { active: false, endMs: Date.now(), endedBy: S.me } }, ...temp]); toast(temp.length ? 'Quick job ended' : 'Snow event ended'); } catch (e) { toast(errText(e), 'bad'); }
+    try { await backend.batch([{ op: 'update', path: 'events/' + b.dataset.end, data: { active: false, endMs: Date.now(), endedBy: S.me } }, ...temp]); toast(ev.quick ? 'Quick job ended' : ev.checks ? 'Site checks ended' : 'Snow event ended'); } catch (e) { toast(errText(e), 'bad'); }
   }));
-  wireQuickJob(p); wireChecks(p, busy);
+  wireQuickJob(p); wireChecks(p);
   $$('[data-editev]', p).forEach(b => b.onclick = () => editEvent(b.dataset.editev));
   $$('[data-delev]', p).forEach(b => twoTap(b, 'Tap again to delete for good', () => deleteEvent(b.dataset.delev)));
   $$('[data-view]', p).forEach(b => b.onclick = () => { S.viewEventId = b.dataset.view; ensureVisits(S.viewEventId); S.tab = 'dash'; drawNow(); });
   $$('[data-rep]', p).forEach(b => b.onclick = () => { S.repEventId = b.dataset.rep; ensureVisits(S.repEventId); S.tab = 'reports'; drawNow(); });
 }
 
-/* Site checks go out on their own, during a snow event, after it, or with no snow event at all.
-   Each run is its own event, so each check run has its own report. Whoever is ticked sees it first on their phone. */
+/* Site checks go out on their own: during a snow event, after it, or with no snow event at all. Each run is its own event with its own report.
+   "Follow crew routes" builds a check list for this run from the sites on the routes you pick (e.g. Sidewalk Crew 2 + Day Crew).
+   Saved check routes (Routes & sites → Site checks) can go out too. Whoever is ticked sees it first on their phone. */
 function checksCard(busy) {
-  const rs = S.routes.filter(r => r.plan === 'checks' && !r.archived);
+  const saved = S.routes.filter(r => r.plan === 'checks' && !r.temp && !r.archived);
+  const crewRs = S.routes.filter(r => !r.archived && !r.hidden && !r.temp && PLANS[r.plan] && r.plan !== 'checks');
+  const outNow = new Set(running().filter(e => !e.checks).flatMap(e => evRoutes(e).map(r => r.id)));
+  const groups = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(pl => [pl, crewRs.filter(r => r.plan === pl)]).filter(g => g[1].length);
   const ppl = S.people.filter(x => x.active !== false).sort((a, b) => a.name.localeCompare(b.name));
+  const lbl = r => `<label><input type="checkbox" data-ckf value="${esc(r.id)}">${esc(r.label)}${r.crewLabel ? ' · ' + esc(r.crewLabel) : ''} <span class="small muted">· ${(r.stops || []).length} sites</span>${outNow.has(r.id) ? ' <span class="flag green">Out now</span>' : ''}</label>`;
   return `<div class="card" id="ckCard"><h2>Send out site checks</h2>
-    <p class="muted small">For checking sites behind the crews, or on their own with no snow event. On the checker’s phone, sites the crews have finished in the last 24 hours show as ready to check.</p>
-    ${rs.length ? `<label class="f" for="ckN">Name</label><input id="ckN" value="${esc('Site checks – ' + day(Date.now()))}">
-    <label class="f">Check routes</label><div class="checks">${rs.map(r => `<label style="${busy[r.id] ? 'opacity:.55' : ''}"><input type="checkbox" data-ckr value="${esc(r.id)}" ${busy[r.id] ? 'disabled' : ''}>${esc(r.label)} <span class="small muted">· ${(r.stops || []).length} sites${busy[r.id] ? ` · out now in ${esc(busy[r.id].name)}` : ''}</span></label>`).join('')}</div>
-    <label class="f">Who’s checking</label><div class="checks" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 8px">${ppl.map(x => `<label style="margin:0;padding:6px 8px;min-height:40px"><input type="checkbox" data-ckp value="${esc(x.id)}">${esc(x.name)}</label>`).join('')}</div>
-    <p class="small muted">Leave nobody ticked to keep each route’s usual checker. Anyone signed in can still pick the route from “All routes running now”.</p>
-    <div class="err" id="ckErr"></div><button class="btn go" id="ckGo" type="button">Send out site checks</button>`
-    : '<p class="small">No check routes yet. Make one on <b>Routes &amp; sites</b> → Site checks → + New route, and add the sites to check.</p>'}</div>`;
+    <p class="muted small">Pick the crew routes to check behind. The checker gets all their sites in one list; on their phone, sites the crews have finished show as ready to check, in the order the crews finished them. Works with no snow event running too.</p>
+    <label class="f" for="ckN">Name</label><input id="ckN" value="${esc('Site checks – ' + day(Date.now()))}">
+    <h3 class="row" style="justify-content:space-between">Follow these crew routes ${outNow.size ? '<button class="link" id="ckOut" type="button">Tick the routes out now</button>' : ''}</h3>
+    ${groups.map(([pl, rs]) => `<div class="small muted" style="margin-top:6px">${esc(PLANS[pl].label)}</div><div class="checks">${rs.map(lbl).join('')}</div>`).join('') || '<p class="small muted">No routes yet.</p>'}
+    ${saved.length ? `<h3>Saved check routes</h3><div class="checks">${saved.map(r => `<label style="${busy[r.id] ? 'opacity:.55' : ''}"><input type="checkbox" data-ckr value="${esc(r.id)}" ${busy[r.id] ? 'disabled' : ''}>${esc(r.label)} <span class="small muted">· ${(r.stops || []).length} sites${busy[r.id] ? ` · out now in ${esc(busy[r.id].name)}` : ''}</span></label>`).join('')}</div>` : ''}
+    <h3>Who’s checking</h3><div class="checks" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 8px">${ppl.map(x => `<label style="margin:0;padding:6px 8px;min-height:40px"><input type="checkbox" data-ckp value="${esc(x.id)}">${esc(x.name)}</label>`).join('')}</div>
+    <p class="small muted">They see it at the top of their list on the crew app. Anyone signed in can also pick it from “All routes running now”.</p>
+    <div class="err" id="ckErr"></div><button class="btn go" id="ckGo" type="button">Send out site checks</button></div>`;
 }
-function wireChecks(p, busy) {
+function wireChecks(p) {
   const go = $('#ckGo', p); if (!go) return;
-  const sync = () => { const ids = $$('[data-ckr]:checked', p).map(x => x.value); const mem = new Set(S.routes.filter(r => ids.includes(r.id)).flatMap(r => r.members || [])); $$('[data-ckp]', p).forEach(c => { c.checked = mem.has(c.value); }); };
-  $$('[data-ckr]', p).forEach(c => c.onchange = sync);
+  const outNow = new Set(running().filter(e => !e.checks).flatMap(e => evRoutes(e).map(r => r.id)));
+  if ($('#ckOut', p)) $('#ckOut', p).onclick = () => $$('[data-ckf]', p).forEach(c => { c.checked = outNow.has(c.value); });
+  $$('[data-ckr]', p).forEach(c => c.onchange = () => { const mem = new Set(S.routes.filter(r => $$('[data-ckr]:checked', p).some(x => x.value === r.id)).flatMap(r => r.members || [])); if (mem.size) $$('[data-ckp]', p).forEach(x => { x.checked = x.checked || mem.has(x.value); }); });
   twoTap(go, 'Tap again to send it out', async () => {
-    const routes = $$('[data-ckr]:checked', p).map(x => x.value), who = $$('[data-ckp]:checked', p).map(x => x.value);
-    if (!routes.length) { $('#ckErr').textContent = 'Tick at least one check route.'; return; }
-    const id = backend.newId('events');
-    const ops = [{ op: 'set', path: 'events/' + id, data: { name: $('#ckN').value.trim() || 'Site checks – ' + day(Date.now()), routes, startMs: Date.now(), startedBy: S.me, active: true, checks: true } }];
-    if (who.length) routes.forEach(rid => ops.push({ op: 'update', path: 'routes/' + rid, data: { members: who, crewLabel: crewText(who) } }));
+    const follow = $$('[data-ckf]:checked', p).map(x => x.value), saved = $$('[data-ckr]:checked', p).map(x => x.value), who = $$('[data-ckp]:checked', p).map(x => x.value);
+    if (!follow.length && !saved.length) { $('#ckErr').textContent = 'Tick at least one route to check.'; return; }
+    const name = $('#ckN').value.trim() || 'Site checks – ' + day(Date.now()), id = backend.newId('events'), ops = [], routes = [...saved];
+    if (follow.length) {
+      const fr = follow.map(rid => S.routes.find(r => r.id === rid)).filter(Boolean), seen = new Set(), stops = [];
+      for (const r of fr) for (const st of r.stops || []) if (S.sites[st.siteId] && !seen.has(st.siteId)) { seen.add(st.siteId); stops.push({ siteId: st.siteId, lo: null, hi: null }); }
+      const rid = backend.newId('routes');
+      ops.push({ op: 'set', path: 'routes/' + rid, data: { plan: 'checks', temp: true, label: 'Checking: ' + fr.map(r => r.label).join(' + '), order: 0, color: '#0e8f6e', area: 'Site checks', follow,
+        crewLabel: crewText(who), machine: '', members: who, stops, archived: false, hidden: false } });
+      routes.unshift(rid);
+    }
+    if (who.length) saved.forEach(rid => ops.push({ op: 'update', path: 'routes/' + rid, data: { members: who, crewLabel: crewText(who) } }));
+    ops.push({ op: 'set', path: 'events/' + id, data: { name, routes, startMs: Date.now(), startedBy: S.me, active: true, checks: true } });
     try { await backend.batch(ops); ensureVisits(id); S.viewEventId = null; S.tab = 'dash'; lsSet('dr-admin-tab', 'dash'); toast('Site checks sent out'); drawNow(); } catch (e) { toast(errText(e), 'bad'); }
   });
 }

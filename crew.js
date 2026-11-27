@@ -280,13 +280,15 @@ function showRoute() {
   const doneN = stops.filter(isDone).length;
   const checks = r.plan === 'checks'; watchRecent(checks);
   const crewDone = s => crewWork(s.siteId).some(v => v.status === 'done');
+  const doneAt = s => Math.max(0, ...crewWork(s.siteId).filter(v => v.status === 'done').map(v => v.endMs || 0));
   // Crews are out (or were, in the last 24 hrs) on any of these sites: then a site is only ready once they've finished it.
   // With no crew work around (a check on its own), every site is ready.
   const crewsOut = checks && (stops.some(s => crewWork(s.siteId).length) || S.active.some(e => evRoutes(e).some(x => x.plan !== 'checks' && (x.stops || []).some(y => stops.some(s => s.siteId === y.siteId)))));
   const ready = s => !checks || !crewsOut || crewDone(s);
-  const next = stops.find(s => !isDone(s) && !(open && open.siteId === s.siteId) && ready(s));
+  const next = stops.filter(s => !isDone(s) && !(open && open.siteId === s.siteId) && ready(s)).sort((a, b) => crewsOut ? doneAt(a) - doneAt(b) : 0)[0];
   const readyN = stops.filter(s => ready(s) && !isDone(s)).length, waitN = stops.filter(s => !ready(s) && !isDone(s)).length;
-  const shown = !checks || checkFilter === 'all' ? stops : stops.filter(s => checkFilter === 'done' ? ready(s) && !isDone(s) : !ready(s) && !isDone(s));
+  // Ready to check: in the order the crews finished them, so the checker follows behind.
+  const shown = !checks || checkFilter === 'all' ? stops : checkFilter === 'done' ? stops.filter(s => ready(s) && !isDone(s)).sort((a, b) => doneAt(a) - doneAt(b)) : stops.filter(s => !ready(s) && !isDone(s));
   const checkBar = checks ? `<div class="card" style="padding:10px 12px"><b>Site checks</b> <span class="muted small">· ${crewsOut ? `${readyN} ready to check · ${waitN} waiting on crews · ${doneN} checked` : `No crews out on these sites: all ${stops.length} are ready to check`}</span>
       ${crewsOut ? `<div class="row" style="margin-top:8px;gap:6px">${[['done', `Ready to check (${readyN})`], ['todo', `Waiting on crews (${waitN})`], ['all', 'All my sites']].map(([k, l]) => `<button class="btn sm ${checkFilter === k ? 'primary' : ''}" data-cf="${k}" type="button">${l}</button>`).join('')}</div>
       <div class="small muted" style="margin-top:6px">Your phone buzzes when crews finish one of your sites. Keep this screen open.</div>` : ''}</div>` : '';
