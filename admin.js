@@ -244,11 +244,11 @@ function events(p) {
   const run = running(), busy = {};
   for (const e of run) for (const r of evRoutes(e)) busy[r.id] = e;
   const def = 'Snow event – ' + day(Date.now()) + ' ' + t12(Date.now());
-  const plans = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day', 'checks'].map(pl => [pl, S.routes.filter(r => r.plan === pl && !r.archived && !r.hidden)]).filter(x => x[1].length);
+  const plans = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day'].map(pl => [pl, S.routes.filter(r => r.plan === pl && !r.archived && !r.hidden)]).filter(x => x[1].length);
   const hiddenN = S.routes.filter(r => !r.archived && r.hidden).length;
   p.innerHTML = `${run.length ? `<h2>Running now</h2>${run.map(e => `<div class="card"><div class="row" style="justify-content:space-between"><div><b>${esc(e.name)}</b>
         <div class="muted small">Started ${esc(dayTime(e.startMs))} · ${evRoutes(e).map(r => esc(r.label)).join(', ')}</div></div>
-        <button class="btn danger" data-end="${e.id}" type="button">${e.quick ? 'End this quick job' : 'End this snow event'}</button></div></div>`).join('')}
+        <button class="btn danger" data-end="${e.id}" type="button">${e.quick ? 'End this quick job' : e.checks ? 'End these site checks' : 'End this snow event'}</button></div></div>`).join('')}
       <p class="small muted">Save its report first if you want a copy (Reports tab).</p>` : ''}
     <div class="card"><h2>Start a snow event</h2>
       <p class="muted small">Tick the routes going out. You can run more than one snow event at once, for example sidewalks at 5 AM and plows at 8 PM. A route already in a running event can’t be added to another.</p>
@@ -259,6 +259,7 @@ function events(p) {
       <p class="small muted">Full plow routes and drive lane routes use the same machines, so usually tick one or the other.${hiddenN ? ` ${hiddenN} hidden route${hiddenN > 1 ? 's aren’t' : ' isn’t'} listed; show ${hiddenN > 1 ? 'them' : 'it'} on Routes &amp; sites.` : ''}</p>
       <div class="err" id="everr"></div>
       <button class="btn go" id="startEv" type="button">Start snow event</button></div>
+    ${checksCard(busy)}
     ${quickJobCard()}
     <h2>Past snow events</h2>
     <div class="tscroll"><table class="t"><thead><tr><th>Name</th><th>Started</th><th>Ended</th><th>Routes</th><th></th></tr></thead><tbody>
@@ -280,11 +281,39 @@ function events(p) {
     const temp = S.routes.filter(r => r.temp && (ev.routes || []).includes(r.id)).map(r => ({ op: 'update', path: 'routes/' + r.id, data: { archived: true } }));
     try { await backend.batch([{ op: 'update', path: 'events/' + b.dataset.end, data: { active: false, endMs: Date.now(), endedBy: S.me } }, ...temp]); toast(temp.length ? 'Quick job ended' : 'Snow event ended'); } catch (e) { toast(errText(e), 'bad'); }
   }));
-  wireQuickJob(p);
+  wireQuickJob(p); wireChecks(p, busy);
   $$('[data-editev]', p).forEach(b => b.onclick = () => editEvent(b.dataset.editev));
   $$('[data-delev]', p).forEach(b => twoTap(b, 'Tap again to delete for good', () => deleteEvent(b.dataset.delev)));
   $$('[data-view]', p).forEach(b => b.onclick = () => { S.viewEventId = b.dataset.view; ensureVisits(S.viewEventId); S.tab = 'dash'; drawNow(); });
   $$('[data-rep]', p).forEach(b => b.onclick = () => { S.repEventId = b.dataset.rep; ensureVisits(S.repEventId); S.tab = 'reports'; drawNow(); });
+}
+
+/* Site checks go out on their own, during a snow event, after it, or with no snow event at all.
+   Each run is its own event, so each check run has its own report. Whoever is ticked sees it first on their phone. */
+function checksCard(busy) {
+  const rs = S.routes.filter(r => r.plan === 'checks' && !r.archived);
+  const ppl = S.people.filter(x => x.active !== false).sort((a, b) => a.name.localeCompare(b.name));
+  return `<div class="card" id="ckCard"><h2>Send out site checks</h2>
+    <p class="muted small">For checking sites behind the crews, or on their own with no snow event. On the checker’s phone, sites the crews have finished in the last 24 hours show as ready to check.</p>
+    ${rs.length ? `<label class="f" for="ckN">Name</label><input id="ckN" value="${esc('Site checks – ' + day(Date.now()))}">
+    <label class="f">Check routes</label><div class="checks">${rs.map(r => `<label style="${busy[r.id] ? 'opacity:.55' : ''}"><input type="checkbox" data-ckr value="${esc(r.id)}" ${busy[r.id] ? 'disabled' : ''}>${esc(r.label)} <span class="small muted">· ${(r.stops || []).length} sites${busy[r.id] ? ` · out now in ${esc(busy[r.id].name)}` : ''}</span></label>`).join('')}</div>
+    <label class="f">Who’s checking</label><div class="checks" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 8px">${ppl.map(x => `<label style="margin:0;padding:6px 8px;min-height:40px"><input type="checkbox" data-ckp value="${esc(x.id)}">${esc(x.name)}</label>`).join('')}</div>
+    <p class="small muted">Leave nobody ticked to keep each route’s usual checker. Anyone signed in can still pick the route from “All routes running now”.</p>
+    <div class="err" id="ckErr"></div><button class="btn go" id="ckGo" type="button">Send out site checks</button>`
+    : '<p class="small">No check routes yet. Make one on <b>Routes &amp; sites</b> → Site checks → + New route, and add the sites to check.</p>'}</div>`;
+}
+function wireChecks(p, busy) {
+  const go = $('#ckGo', p); if (!go) return;
+  const sync = () => { const ids = $$('[data-ckr]:checked', p).map(x => x.value); const mem = new Set(S.routes.filter(r => ids.includes(r.id)).flatMap(r => r.members || [])); $$('[data-ckp]', p).forEach(c => { c.checked = mem.has(c.value); }); };
+  $$('[data-ckr]', p).forEach(c => c.onchange = sync);
+  twoTap(go, 'Tap again to send it out', async () => {
+    const routes = $$('[data-ckr]:checked', p).map(x => x.value), who = $$('[data-ckp]:checked', p).map(x => x.value);
+    if (!routes.length) { $('#ckErr').textContent = 'Tick at least one check route.'; return; }
+    const id = backend.newId('events');
+    const ops = [{ op: 'set', path: 'events/' + id, data: { name: $('#ckN').value.trim() || 'Site checks – ' + day(Date.now()), routes, startMs: Date.now(), startedBy: S.me, active: true, checks: true } }];
+    if (who.length) routes.forEach(rid => ops.push({ op: 'update', path: 'routes/' + rid, data: { members: who, crewLabel: crewText(who) } }));
+    try { await backend.batch(ops); ensureVisits(id); S.viewEventId = null; S.tab = 'dash'; lsSet('dr-admin-tab', 'dash'); toast('Site checks sent out'); drawNow(); } catch (e) { toast(errText(e), 'bad'); }
+  });
 }
 
 /* Editing and deleting snow events is for Jody only.
@@ -429,6 +458,8 @@ function adList() {
   const words = adFind.toLowerCase().split(/\s+/).filter(Boolean);
   let list = Object.values(S.sites).filter(s => { const hay = [s.name, s.owner || '', s.billTo || '', ...addrList(s.addresses)].join(' ').toLowerCase(); return words.every(w => hay.includes(w)); });
   if (adPlan === 'none') list = list.filter(s => !routesOfSite(s.id).length);
+  else if (adPlan === 'nopin') list = list.filter(s => s.lat == null || s.lon == null);
+  else if (adPlan === 'est') list = list.filter(s => s.lat != null && s.pinExact === false);
   else if (adPlan) list = list.filter(s => routesOfSite(s.id).some(r => r.plan === adPlan));
   const key = s => adSort === 'addr' ? (addrList(s.addresses)[0] || '~') : adSort === 'owner' ? (s.owner || '~') : (s.name || '');
   return list.sort((a, b) => key(a).localeCompare(key(b), undefined, { numeric: true, sensitivity: 'base' }));
@@ -460,7 +491,7 @@ function sitesTab(p) {
   p.innerHTML = `<div class="card noprint"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Addresses</h2><span class="small">${total} sites · ${loose ? `<button class="link" id="adLoose" type="button" style="font-weight:700">${loose} not on a route – show them</button>` : '<span class="muted">all on a route</span>'}</span><button class="btn sm primary" id="adNew" type="button">+ Add an address</button></div>
       <p class="muted small">Every site in the app. Tap a site for its map, notes and routes, or send it out as a quick job.</p>
       <input id="adFind" type="search" placeholder="🔍 Site name, client or address" value="${esc(adFind)}" autocomplete="off">
-      <div class="row" style="margin-top:8px;gap:6px">${chip('', 'All')}${plans.map(pl => chip(pl, PLANS[pl].label)).join('')}${chip('none', 'Not on a route')}</div>
+      <div class="row" style="margin-top:8px;gap:6px">${chip('', 'All')}${plans.map(pl => chip(pl, PLANS[pl].label)).join('')}${chip('none', 'Not on a route')}${chip('nopin', `No map pin (${Object.values(S.sites).filter(s => s.lat == null || s.lon == null).length})`)}${chip('est', `Pin estimated (${Object.values(S.sites).filter(s => s.lat != null && s.pinExact === false).length})`)}</div>
       <label class="row small" style="margin-top:8px;gap:6px">Sort by <select id="adSort" style="width:auto;padding:5px 8px"><option value="name" ${adSort === 'name' ? 'selected' : ''}>Site name</option><option value="addr" ${adSort === 'addr' ? 'selected' : ''}>Address</option><option value="owner" ${adSort === 'owner' ? 'selected' : ''}>Client</option></select></label></div>
     <div class="card" style="padding:0" id="adRows">${adRowsHTML()}</div>`;
   const f = $('#adFind'); f.oninput = () => { adFind = f.value; adMax = 100; $('#adRows').innerHTML = adRowsHTML(); wireAdRows(p); };
@@ -920,6 +951,7 @@ function routeForm(r) {
   const isNew = !r; r = r || { plan: rsPlan, label: '', area: '', crewLabel: '', machine: '', color: '#1d5fa8', members: [] };
   const crew = S.people.filter(p => p.active !== false);
   dialog(isNew ? 'New route' : 'Route settings & crew', `<label class="f">Route name</label><input id="rL" value="${esc(r.label)}" placeholder="e.g. Sidewalk Crew 5">
+    <label class="f">Route type <span class="muted small">(which section it’s listed under)</span></label><select id="rP">${Object.keys(PLANS).filter(pl => pl !== 'quick').map(pl => `<option value="${pl}" ${r.plan === pl ? 'selected' : ''}>${esc(PLANS[pl].label)}</option>`).join('')}</select>
     <label class="f">Area</label><input id="rA" value="${esc(r.area || '')}">
     <div class="two"><div><label class="f">Machine (optional)</label><input id="rM" value="${esc(r.machine || '')}"></div><div><label class="f">Colour</label><input id="rC" type="color" value="${esc(r.color || '#1d5fa8')}" style="height:44px"></div></div>
     <label class="f">Usual crew (they see this route first)</label><div class="checks">${crew.map(p => `<label><input type="checkbox" value="${p.id}" ${(r.members || []).includes(p.id) ? 'checked' : ''}>${esc(p.name)}</label>`).join('')}</div>
@@ -930,11 +962,13 @@ function routeForm(r) {
         const label = $('#rL').value.trim(); if (!label) return toast('Route name is needed', 'bad');
         const members = $$('#dlgB .checks input:checked').map(i => i.value);
         const crewLabel = members.map(id => first(id)).join(members.length > 2 ? ', ' : ' & ').replace(/, ([^,]*)$/, ' & $1');
-        const data = { label, area: $('#rA').value.trim(), machine: $('#rM').value.trim(), color: $('#rC').value, members, crewLabel };
+        const data = { label, area: $('#rA').value.trim(), machine: $('#rM').value.trim(), color: $('#rC').value, members, crewLabel, plan: $('#rP').value };
+        if (!isNew && data.plan !== r.plan && running().some(e => (e.routes || []).includes(r.id))) return toast('This route is in a running snow event. End it (or take the route out) before changing its type.', 'bad');
         try {
-          if (isNew) { const id = r.plan + '-' + slug(label); await backend.set('routes/' + id, { ...data, plan: r.plan, order: Math.max(0, ...S.routes.map(x => x.order || 0)) + 1, stops: [] }); rsRoute = id; lsSet('dr-rs-route', id); }
+          if (isNew) { const id = data.plan + '-' + slug(label); await backend.set('routes/' + id, { ...data, order: Math.max(0, ...S.routes.map(x => x.order || 0)) + 1, stops: [] }); rsRoute = id; lsSet('dr-rs-route', id); }
           else await backend.update('routes/' + r.id, data);
-          d.close(); toast('Route saved');
+          if (!isNew && data.plan !== r.plan) { rsPlan = data.plan; lsSet('dr-rs-plan', rsPlan); }
+          d.close(); toast(!isNew && data.plan !== r.plan ? `Route moved to ${PLANS[data.plan].label}` : 'Route saved');
         } catch (e) { toast(errText(e), 'bad'); }
       } }]);
 }

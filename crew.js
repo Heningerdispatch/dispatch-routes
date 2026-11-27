@@ -121,7 +121,13 @@ function watchRecent(on) {
   if (!on) { if (recentUnsub) { recentUnsub(); recentUnsub = null; } recent = []; recentSig = null; return; }
   if (recentUnsub) return;
   recentUnsub = backend.watchList('visits', [['startMs', '>=', Date.now() - CHECK_MS]], vs => {
+    const before = new Set(recent.filter(v => v.status === 'done').map(v => v.id)), first = recentSig === null;
     recent = vs;
+    if (!first && S.route && S.route.plan === 'checks') {
+      const mine = new Set((S.route.stops || []).map(x => x.siteId)), isCheck = rid => (S.routes.find(r => r.id === rid) || {}).plan === 'checks';
+      const fresh = vs.filter(v => v.status === 'done' && !before.has(v.id) && mine.has(v.siteId) && !isCheck(v.routeId));
+      if (fresh.length) { toast(`✓ Crews just finished ${fresh.map(v => (S.sites[v.siteId] || {}).name || 'a site').join(', ')}: ready to check`); try { navigator.vibrate && navigator.vibrate([120, 80, 120]); } catch (e) {} }
+    }
     const sig = JSON.stringify(vs.map(v => [v.id, v.status, v.endMs]).sort());
     if (sig !== recentSig) { recentSig = sig; if (S.route && S.route.plan === 'checks') render(); }
   });
@@ -133,15 +139,15 @@ function crewWork(siteId) {
   return recent.filter(v => v.siteId === siteId && v.status !== 'cancelled' && !isCheck(v.routeId) && v.startMs >= Date.now() - CHECK_MS)
     .sort((a, b) => (b.endMs || b.startMs) - (a.endMs || a.startMs));
 }
-function crewWorkHTML(siteId) {
+function crewWorkHTML(siteId, crewsOut) {
   const vs = crewWork(siteId);
-  if (!vs.length) return '<div class="cw none">Crews: not done in the last 24 hrs</div>';
+  if (!vs.length) return crewsOut ? '<div class="cw none">⏳ Crews haven’t done this one yet</div>' : '<div class="small muted">No crew visit in the last 24 hrs</div>';
   const rname = id => (S.routes.find(r => r.id === id) || {}).label || 'another route';
   return vs.slice(0, 3).map(v => v.status === 'open'
     ? `<div class="cw on">● Crew on site now: ${esc(rname(v.routeId))} since ${t12(v.startMs)} · ${esc((v.crew || []).map(id => personName(id).split(' ')[0]).join(', '))}</div>`
     : `<div class="cw done">✓ Crew done ${esc(dayTime(v.endMs))} (${dur(Date.now() - v.endMs)} ago) · ${esc(rname(v.routeId))} · ${esc((v.crew || []).map(id => personName(id).split(' ')[0]).join(', '))}${v.weather ? ' · ' + esc(wxText(v.weather, true)) : ''}</div>`).join('');
 }
-let checkFilter = lsGet('dr-check-filter', 'all');
+let checkFilter = lsGet('dr-check-filter', 'done');
 
 function netBadge() {
   const n = $('#net'); if (!n) return;
@@ -198,7 +204,7 @@ function showPick() {
 
 /* ---------- Route map: open/closed is remembered on this phone ---------- */
 const mapBox = (open, legend) => `<details class="mapbox card" ${open ? 'open' : ''}><summary>Route map <span class="muted small">(for reference)</span></summary><div id="rmap" class="rmap"></div>
-  ${legend ? `<div class="maplegend"><span><i style="background:#1e7b45"></i>Done</span><span><i style="background:#1d5fa8"></i>On site</span><span><i style="background:#fff;box-shadow:0 0 0 3px #f5b301"></i>Next</span><span><i style="background:#1f2a36"></i>Yard</span></div>` : ''}</details>`;
+  ${legend ? `<div class="maplegend"><span><i style="background:#1e7b45"></i>Done</span><span><i style="background:#1d5fa8"></i>On site</span><span><i style="background:#fff;box-shadow:0 0 0 3px #f5b301"></i>Next</span><span><i style="background:#1f2a36"></i>Yard</span>${legend === 'checks' ? '<span><i style="background:#8a96a3"></i>Crews not done</span>' : ''}</div>` : ''}</details>`;
 function wireMap(stops, key, color, remember) {
   const box = $('.mapbox'); if (!box) return;
   const draw = () => drawRouteMap($('#rmap'), stops, { key, color });
@@ -274,10 +280,16 @@ function showRoute() {
   const doneN = stops.filter(isDone).length;
   const checks = r.plan === 'checks'; watchRecent(checks);
   const crewDone = s => crewWork(s.siteId).some(v => v.status === 'done');
-  const next = stops.find(s => !isDone(s) && !(open && open.siteId === s.siteId) && (!checks || checkFilter !== 'done' || crewDone(s)));
-  const shown = !checks || checkFilter === 'all' ? stops : stops.filter(s => checkFilter === 'done' ? crewDone(s) : !crewDone(s));
-  const checkBar = checks ? `<div class="card" style="padding:10px 12px"><b>Site checks</b> <span class="muted small">· crews have finished ${stops.filter(crewDone).length} of ${stops.length} of your sites in the last 24 hrs</span>
-      <div class="row" style="margin-top:8px;gap:6px">${[['all', 'All my sites'], ['done', 'Crews done – ready to check'], ['todo', 'Crews not done yet']].map(([k, l]) => `<button class="btn sm ${checkFilter === k ? 'primary' : ''}" data-cf="${k}" type="button">${l}</button>`).join('')}</div></div>` : '';
+  // Crews are out (or were, in the last 24 hrs) on any of these sites: then a site is only ready once they've finished it.
+  // With no crew work around (a check on its own), every site is ready.
+  const crewsOut = checks && (stops.some(s => crewWork(s.siteId).length) || S.active.some(e => evRoutes(e).some(x => x.plan !== 'checks' && (x.stops || []).some(y => stops.some(s => s.siteId === y.siteId)))));
+  const ready = s => !checks || !crewsOut || crewDone(s);
+  const next = stops.find(s => !isDone(s) && !(open && open.siteId === s.siteId) && ready(s));
+  const readyN = stops.filter(s => ready(s) && !isDone(s)).length, waitN = stops.filter(s => !ready(s) && !isDone(s)).length;
+  const shown = !checks || checkFilter === 'all' ? stops : stops.filter(s => checkFilter === 'done' ? ready(s) && !isDone(s) : !ready(s) && !isDone(s));
+  const checkBar = checks ? `<div class="card" style="padding:10px 12px"><b>Site checks</b> <span class="muted small">· ${crewsOut ? `${readyN} ready to check · ${waitN} waiting on crews · ${doneN} checked` : `No crews out on these sites: all ${stops.length} are ready to check`}</span>
+      ${crewsOut ? `<div class="row" style="margin-top:8px;gap:6px">${[['done', `Ready to check (${readyN})`], ['todo', `Waiting on crews (${waitN})`], ['all', 'All my sites']].map(([k, l]) => `<button class="btn sm ${checkFilter === k ? 'primary' : ''}" data-cf="${k}" type="button">${l}</button>`).join('')}</div>
+      <div class="small muted" style="margin-top:6px">Your phone buzzes when crews finish one of your sites. Keep this screen open.</div>` : ''}</div>` : '';
   $('#title').textContent = r.label;
   const keepScroll = window.scrollY, home = lsGet(HOME, null), homeR = isHelping() && S.routes.find(x => x.id === home.routeId);
   app.innerHTML = `${searchHTML()}${isHelping() ? `<div class="banner info helpbar"><span>You’re doing a site on <b>${esc(r.label)}</b>.</span>${homeR ? `<button class="btn sm" id="goHome" type="button">← Back to ${esc(homeR.label)}</button>` : ''}</div>` : ''}<div class="card rhead" style="--c:${esc(r.color || '#1d5fa8')}">
@@ -288,13 +300,13 @@ function showRoute() {
       <div class="legs">${legs(stops.map(s => s.site)).map((l, i) => `<a class="btn sm" target="_blank" rel="noopener" href="${esc(l.url)}">Directions ${l.from === 0 ? 'Yard' : l.from}–${l.to} ↗</a>`).join('')}</div>
     </div>
     ${doneN === stops.length && stops.length ? '<div class="banner ok">✓ All stops done. Head back to the yard.</div>' : ''}${checkBar}
-    <ol class="stops" style="--c:${esc(r.color || '#1d5fa8')}">${shown.map(s => stopHTML(s, vOf(s), open, next, checks)).join('') || '<p class="muted" style="padding:10px">No sites in this list right now.</p>'}</ol>
+    <ol class="stops" style="--c:${esc(r.color || '#1d5fa8')}">${(checks && !crewsOut ? stops : shown).map(s => stopHTML(s, vOf(s), open, next, checks ? { crewsOut, ready: ready(s) } : null)).join('') || `<p class="muted" style="padding:10px">${checkFilter === 'done' ? 'Nothing ready yet. Your phone buzzes when crews finish one of your sites.' : 'No sites in this list right now.'}</p>`}</ol>
     <div class="yardrow"><span class="num">Y</span><span>Back to ${esc(YARD.name)}</span></div>
-    ${mapBox(lsGet('dr-map-bottom', true), true)}`;
+    ${mapBox(lsGet('dr-map-bottom', true), checks && crewsOut ? 'checks' : true)}`;
   window.scrollTo(0, keepScroll);
   wireStops(stops, vOf, open); wireSearch();
   $$('[data-cf]').forEach(b => b.onclick = () => { checkFilter = b.dataset.cf; lsSet('dr-check-filter', checkFilter); render(); });
-  wireMap(stops.map(s => ({ ...s, state: open && open.siteId === s.siteId ? 'onsite' : isDone(s) ? 'done' : next && next.siteId === s.siteId ? 'next' : '' })), 'run-' + r.id, r.color, true);
+  wireMap(stops.map(s => ({ ...s, state: open && open.siteId === s.siteId ? 'onsite' : isDone(s) ? 'done' : next && next.siteId === s.siteId ? 'next' : !ready(s) ? 'wait' : '' })), 'run-' + r.id, r.color, true);
   if ($('#goHome')) $('#goHome').onclick = () => { lsSet(PICK, home); lsSet(HOME, null); window.scrollTo(0, 0); render(); };
   if (gotoSite) { const li = $(`li.stop[data-site="${CSS.escape(gotoSite)}"]`); gotoSite = null;
     if (li) { li.scrollIntoView({ block: 'center' }); li.classList.add('flash'); setTimeout(() => li.classList.remove('flash'), 2500); } }
@@ -316,7 +328,8 @@ function stopHTML(s, vs, open, next, checks) {
   const mine = open && open.siteId === s.siteId ? open : null;
   const done = vs.filter(v => v.status === 'done');
   const cls = mine ? 'onsite' : done.length ? 'done' : (next && next.siteId === s.siteId ? 'next' : '');
-  const tag = mine ? '<span class="tag on">ON SITE</span>' : done.length ? '' : (next && next.siteId === s.siteId ? '<span class="tag next">NEXT</span>' : '');
+  const wait = checks && checks.crewsOut && !checks.ready && !done.length && !mine;
+  const tag = mine ? '<span class="tag on">ON SITE</span>' : done.length ? '' : (next && next.siteId === s.siteId ? '<span class="tag next">NEXT</span>' : wait ? '<span class="tag" style="background:#8a96a3;color:#fff">WAIT</span>' : '');
   const ticks = (mine && mine.addrTicks) || [];
   let addrs = '';
   if (adr.length) {
@@ -339,11 +352,11 @@ function stopHTML(s, vs, open, next, checks) {
     const blocked = open ? `Finish ${esc((S.sites[open.siteId] || {}).name || 'the open site')} first` : '';
     act = (lines ? `<div class="visits">${lines}</div>` : '') +
       (done.length ? `<div class="acts"><button type="button" class="link" data-start ${open ? 'disabled' : ''}>${open ? blocked : '+ Start another visit'}</button></div>`
-        : `<div class="acts"><button type="button" class="btn ${next && next.siteId === s.siteId && !open ? 'go' : ''} full" data-start ${open ? 'disabled' : ''}>${open ? blocked : 'Start site'}</button></div>`);
+        : `<div class="acts"><button type="button" class="btn ${next && next.siteId === s.siteId && !open ? 'go' : ''} full" data-start ${wait ? 'data-wait' : ''} ${open ? 'disabled' : ''}>${open ? blocked : checks ? 'Start check' : 'Start site'}</button></div>`);
   }
   return `<li class="stop ${cls}" data-site="${esc(s.siteId)}"><span class="num">${done.length && !mine ? '✓' : s.n}</span><div class="body">
     <div class="nm">${esc(site.name)}${tag}</div><div class="owner">${esc(site.owner || '')}</div>
-    ${checks ? `<div class="cws">${crewWorkHTML(s.siteId)}</div>` : ''}${addrs}${noteHTML(site)}
+    ${checks ? `<div class="cws">${crewWorkHTML(s.siteId, checks.crewsOut)}</div>` : ''}${addrs}${noteHTML(site)}
     <div class="meta">${hrs(s.lo, s.hi) ? `<span>${hrs(s.lo, s.hi)}</span>` : ''}<a href="${esc(mapLink(site))}" target="_blank" rel="noopener">Map ↗</a>${site.mapFile ? `<a href="maps/${encodeURIComponent(site.mapFile)}" target="_blank" rel="noopener">Site map ↗</a>` : ''}</div>
     ${act}</div></li>`;
 }
@@ -356,7 +369,9 @@ function wireStops(stops, vOf, open) {
     const st = li.querySelector('[data-start]');
     if (st && !st.disabled) {
       const go = () => startVisit(s, vOf(s));
-      if (st.classList.contains('link')) twoTap(st, 'Tap again to start another visit', go); else st.onclick = go;
+      if (st.classList.contains('link')) twoTap(st, 'Tap again to start another visit', go);
+      else if (st.hasAttribute('data-wait')) twoTap(st, 'Crews aren’t done here yet. Tap again to check anyway', go);
+      else st.onclick = go;
     }
     if (!mine) return;
     const path = 'visits/' + mine.id;

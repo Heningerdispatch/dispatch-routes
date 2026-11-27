@@ -187,7 +187,7 @@ export async function drawRouteMap(el, stops, { key, color = '#1d5fa8' } = {}) {
   const pin = (label, bg, ring) => L.divIcon({ className: 'rpin', html: `<span style="background:${bg}${ring ? ';box-shadow:0 0 0 4px ' + ring : ''}">${label}</span>`, iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -12] });
   L.marker(yard, { icon: pin('Y', '#1f2a36') }).addTo(map).bindPopup(`<b>${esc(YARD.name)}</b><br>${esc(YARD.address)}`);
   pts.forEach(s => {
-    const bg = s.state === 'done' ? '#1e7b45' : s.state === 'onsite' ? '#1d5fa8' : color;
+    const bg = s.state === 'done' ? '#1e7b45' : s.state === 'onsite' ? '#1d5fa8' : s.state === 'wait' ? '#8a96a3' : color;
     L.marker([s.site.lat, s.site.lon], { icon: pin(s.state === 'done' ? '✓' : s.n, bg, s.state === 'next' ? '#f5b301' : ''), zIndexOffset: s.state === 'next' || s.state === 'onsite' ? 1000 : 0 })
       .addTo(map).bindPopup(`<b>${s.n}. ${esc(s.site.name)}</b>${s.site.owner ? '<br>' + esc(s.site.owner) : ''}<br>${addrList(s.site.addresses).map(esc).join('<br>')}<br><a href="${esc(mapLink(s.site))}" target="_blank" rel="noopener">Open in Maps ↗</a>`);
   });
