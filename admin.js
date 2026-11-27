@@ -396,11 +396,11 @@ function wireQuickJob(p) {
   $('#qjFind').oninput = e => { QJ.q = e.target.value; refresh(); };
   $$('[data-qjc]', p).forEach(c => c.onchange = () => { QJ.crew = $$('[data-qjc]:checked', p).map(x => x.dataset.qjc); });
   refresh();
-  $('#qjNew').onclick = () => dialog('New site for this quick job', siteFields({ name: QJ.q }, {}), [{ label: 'Cancel' }, { label: 'Add site', cls: 'primary', run: async d => {
+  $('#qjNew').onclick = () => wirePinTools(dialog('New site for this quick job', siteFields({ name: QJ.q }, {}, true), [{ label: 'Cancel' }, { label: 'Add site', cls: 'primary', run: async d => {
     const v = readSite(null); if (!v) return;
     let id = slug(v.site.name) || 'site'; while (S.sites[id]) id += '-2';
     try { await backend.set('sites/' + id, v.site); S.sites[id] = { id, ...v.site }; QJ.sites.push(id); QJ.q = ''; d.close(); drawNow(); toast('Site added'); } catch (e) { toast(errText(e), 'bad'); }
-  } }]);
+  } }]));
   twoTap($('#qjGo'), 'Tap again to send it out', async () => {
     if (!QJ.sites.length) { $('#qjErr').textContent = 'Add at least one site.'; return; }
     try {
@@ -427,7 +427,7 @@ const stopNo = (r, id) => (r.stops || []).filter(x => S.sites[x.siteId]).findInd
 const runningQuick = () => running().filter(e => e.quick).map(e => ({ ev: e, r: S.routes.find(r => r.temp && (e.routes || []).includes(r.id)) })).filter(x => x.r);
 function adList() {
   const words = adFind.toLowerCase().split(/\s+/).filter(Boolean);
-  let list = Object.values(S.sites).filter(s => { const hay = [s.name, s.owner || '', ...addrList(s.addresses)].join(' ').toLowerCase(); return words.every(w => hay.includes(w)); });
+  let list = Object.values(S.sites).filter(s => { const hay = [s.name, s.owner || '', s.billTo || '', ...addrList(s.addresses)].join(' ').toLowerCase(); return words.every(w => hay.includes(w)); });
   if (adPlan === 'none') list = list.filter(s => !routesOfSite(s.id).length);
   else if (adPlan) list = list.filter(s => routesOfSite(s.id).some(r => r.plan === adPlan));
   const key = s => adSort === 'addr' ? (addrList(s.addresses)[0] || '~') : adSort === 'owner' ? (s.owner || '~') : (s.name || '');
@@ -440,7 +440,7 @@ function adRowsHTML() {
   return `<p class="small muted" style="padding:8px 12px 0;margin:0">${list.length} address${list.length === 1 ? '' : 'es'}${list.length > shown.length ? ` · showing the first ${shown.length}` : ''}</p>` + shown.map(s => {
     const rs = routesOfSite(s.id);
     return `<div class="stoprow" style="grid-template-columns:minmax(0,1fr) auto">
-      <div><button class="link" data-adsite="${esc(s.id)}" type="button" style="font-weight:800;font-size:1rem;color:inherit;text-decoration:none;padding:0;text-align:left">${esc(s.name)}</button>${s.owner ? ` <span class="muted small">· ${esc(s.owner)}</span>` : ''}${onQuick.has(s.id) ? ' <span class="flag green">On a quick job now</span>' : ''}
+      <div><button class="link" data-adsite="${esc(s.id)}" type="button" style="font-weight:800;font-size:1rem;color:inherit;text-decoration:none;padding:0;text-align:left">${esc(s.name)}</button>${s.owner ? ` <span class="muted small">· ${esc(s.owner)}</span>` : ''}${s.billTo ? ` <span class="flag amber">Bill to ${esc(s.billTo)}</span>` : ''}${s.lat == null ? ' <span class="flag red">No map pin</span>' : ''}${onQuick.has(s.id) ? ' <span class="flag green">On a quick job now</span>' : ''}
         <div class="small">${addrList(s.addresses).map(esc).join(' / ') || '<span class="muted">No address entered</span>'}</div>
         <div class="row" style="gap:4px;margin-top:4px">${rs.map(r => `<button class="btn sm" data-adroute="${esc(r.id)}" type="button" title="Open this route" style="border-color:${esc(r.color || '#1d5fa8')};border-left-width:6px">${esc(PLANS[r.plan].short)} · ${esc(r.label)} · stop ${stopNo(r, s.id)}</button>`).join('') || '<span class="small muted">Not on any route</span>'}</div></div>
       <div class="row"><button class="btn sm" data-admap="${esc(s.id)}" type="button">Map</button><button class="btn sm primary" data-adqj="${esc(s.id)}" type="button">+ Quick job</button></div></div>`;
@@ -457,7 +457,7 @@ function sitesTab(p) {
   const plans = ['plow', 'drivelanes', 'sanding', 'sidewalk', 'day', 'checks'].filter(pl => S.routes.some(r => r.plan === pl && !r.archived));
   const total = Object.keys(S.sites).length, loose = Object.values(S.sites).filter(s => !routesOfSite(s.id).length).length;
   const chip = (v, l) => `<button class="btn sm ${adPlan === v ? 'primary' : ''}" data-adplan="${v}" type="button">${esc(l)}</button>`;
-  p.innerHTML = `<div class="card noprint"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Addresses</h2><span class="muted small">${total} sites · ${loose} not on a route</span></div>
+  p.innerHTML = `<div class="card noprint"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Addresses</h2><span class="small">${total} sites · ${loose ? `<button class="link" id="adLoose" type="button" style="font-weight:700">${loose} not on a route – show them</button>` : '<span class="muted">all on a route</span>'}</span><button class="btn sm primary" id="adNew" type="button">+ Add an address</button></div>
       <p class="muted small">Every site in the app. Tap a site for its map, notes and routes, or send it out as a quick job.</p>
       <input id="adFind" type="search" placeholder="🔍 Site name, client or address" value="${esc(adFind)}" autocomplete="off">
       <div class="row" style="margin-top:8px;gap:6px">${chip('', 'All')}${plans.map(pl => chip(pl, PLANS[pl].label)).join('')}${chip('none', 'Not on a route')}</div>
@@ -465,6 +465,8 @@ function sitesTab(p) {
     <div class="card" style="padding:0" id="adRows">${adRowsHTML()}</div>`;
   const f = $('#adFind'); f.oninput = () => { adFind = f.value; adMax = 100; $('#adRows').innerHTML = adRowsHTML(); wireAdRows(p); };
   $$('[data-adplan]', p).forEach(b => b.onclick = () => { adPlan = b.dataset.adplan; lsSet('dr-ad-plan', adPlan); adMax = 100; drawNow(); });
+  $('#adNew').onclick = () => newSite();
+  if ($('#adLoose')) $('#adLoose').onclick = () => { adPlan = 'none'; adFind = ''; lsSet('dr-ad-plan', adPlan); adMax = 100; drawNow(); };
   $('#adSort').onchange = e => { adSort = e.target.value; lsSet('dr-ad-sort', adSort); e.target.blur(); drawNow(); };
   wireAdRows(p);
 }
@@ -481,10 +483,10 @@ function siteDetail(id) {
   const s = S.sites[id]; if (!s) return;
   const rs = routesOfSite(id), hasPin = s.lat != null && s.lon != null;
   const note = (l, v, red) => v ? `<div style="padding:6px 9px;border-radius:7px;margin-top:4px;background:${red ? 'var(--warn-bg);color:var(--warn);font-weight:800' : 'color-mix(in srgb, var(--line) 35%, transparent)'}"><b>${l}:</b> ${esc(v)}</div>` : '';
-  const body = `${s.owner ? `<p class="muted" style="margin:6px 0 2px">${esc(s.owner)}</p>` : ''}
+  const body = `${s.owner ? `<p class="muted" style="margin:6px 0 2px">${esc(s.owner)}</p>` : ''}${s.billTo ? `<p style="margin:2px 0"><span class="flag amber">Bill to ${esc(s.billTo)}</span></p>` : ''}
     <div style="font-weight:700">${addrList(s.addresses).map(esc).join('<br>') || '<span class="muted">No address entered</span>'}</div>
     ${hasPin ? `<div id="smap" class="rmap" style="height:300px"></div>${s.pinExact === false ? '<p class="small muted" style="margin:4px 0 0"><span class="flag amber">Pin estimated</span> from the address; it may be a little off.</p>' : ''}`
-      : '<p class="small muted">No map pin yet. Add one on Routes &amp; sites → Edit site. Google Maps below searches by the address.</p>'}
+      : '<p class="small muted">No map pin yet. Tap “Edit site”, then “Find the address on the map”. Google Maps below searches by the address.</p>'}
     <p class="row" style="margin:8px 0"><a class="btn sm" href="${esc(mapLink(s))}" target="_blank" rel="noopener">Open in Google Maps ↗</a>
       <a class="btn sm" href="https://www.google.com/maps/dir/${YARD.q}/${siteQ(s)}" target="_blank" rel="noopener">Directions from Yard 1 ↗</a></p>
     ${note('Deadline', s.deadline, true)}${note('Access', s.access)}${note('Snow piles', s.piles)}${note('Hazards', s.hazards)}${note('Notes', s.notes)}
@@ -493,7 +495,7 @@ function siteDetail(id) {
       return `<div class="row" style="justify-content:space-between;border-left:5px solid ${esc(r.color || '#1d5fa8')};padding:4px 0 4px 8px;margin-top:4px">
         <div class="small"><b>${esc(r.label)}</b> <span class="muted">· ${esc(PLANS[r.plan].short)} · stop ${stopNo(r, id)} of ${stopsOf(r).length}${hrs(st.lo, st.hi) ? ' · ' + esc(hrs(st.lo, st.hi)) : ''}${(r.members || []).length ? ' · ' + esc(r.members.map(pname).join(', ')) : ''}</span></div>
         <button class="btn sm" data-sdroute="${esc(r.id)}" type="button">View route</button></div>`; }).join('') || '<p class="small muted">Not on any route.</p>'}`;
-  const d = dialog(s.name, body, [{ label: 'Close' }, { label: '+ Quick job', cls: 'primary', run: () => adQuickJob(id) }]);
+  const d = dialog(s.name, body, [{ label: 'Close' }, { label: 'Edit site', run: () => editSite(id) }, { label: 'Copy as new site', run: () => newSite(id) }, { label: '+ Quick job', cls: 'primary', run: () => adQuickJob(id) }]);
   $$('[data-sdroute]', d).forEach(b => b.onclick = () => { d.close(); openRoute(b.dataset.sdroute); });
   if (hasPin) drawSiteMap($('#smap', d), s);
 }
@@ -559,6 +561,14 @@ function rowFlags(s, v) {
   if (v.editedBy) f.push('Edited by ' + first(v.editedBy));
   return f.join('; ');
 }
+/* One line of weather for the whole report: temperature range, lowest wind chill and the conditions seen at site starts. */
+function wxSummary(rows) {
+  const ws = rows.map(x => x.v && x.v.weather).filter(w => w && w.t != null);
+  if (!ws.length) return '<p class="small muted">Weather: none recorded yet (it’s stamped when a crew taps Start site).</p>';
+  const ts = ws.map(w => w.t), ch = ws.map(w => w.chill).filter(x => x != null), conds = [...new Set(ws.map(w => w.cond).filter(Boolean))];
+  const lo = Math.round(Math.min(...ts)), hi = Math.round(Math.max(...ts));
+  return `<p><b>Weather at site starts:</b> ${lo === hi ? lo : lo + ' to ' + hi}°C${ch.length ? ` · wind chill down to ${Math.round(Math.min(...ch))}` : ''}${conds.length ? ' · ' + esc(conds.join(', ')) : ''} <span class="muted small">(Environment Canada, ${ws.length} reading${ws.length > 1 ? 's' : ''})</span></p>`;
+}
 function reports(p) {
   const ev = evById(S.repEventId) || running()[0] || S.events[0] || null;
   if (ev) ensureVisits(ev.id);
@@ -570,9 +580,9 @@ function reports(p) {
   $('#rev').onchange = () => { S.repEventId = $('#rev').value; ensureVisits(S.repEventId); $('#rev').blur(); drawNow(); };
   const body = () => {
     const rows = reportRows(ev, $('#rrt').value), doneN = rows.filter(x => x.v && x.v.status === 'done').length;
-    $('#rbody').innerHTML = `<h2>${esc(ev.name)}</h2><p class="muted">Started ${esc(dayTime(ev.startMs))}${ev.endMs ? ' · ended ' + esc(dayTime(ev.endMs)) : ''} · ${doneN} completed visits · ${rows.filter(x => !x.v).length} sites not done</p>
-      <div class="tscroll"><table class="t"><thead><tr><th>Route</th><th>#</th><th>Site</th><th>Address(es)</th><th>Visit</th><th>Start</th><th>Complete</th><th>Time on site</th><th>Planned</th><th>Weather at start</th><th>Crew</th><th>Nektar &amp; FLHA</th><th>GPS</th><th>Flags</th></tr></thead><tbody>
-      ${rows.map(({ r, s, v }) => `<tr style="${v ? '' : 'background:var(--warn-bg)'}"><td>${esc(r.label)}</td><td>${s.n}</td><td><b>${esc(s.site.name)}</b></td><td>${addrList(s.site.addresses).map(esc).join('<br>')}</td>
+    $('#rbody').innerHTML = `<h2>${esc(ev.name)}</h2><p class="muted">Started ${esc(dayTime(ev.startMs))}${ev.endMs ? ' · ended ' + esc(dayTime(ev.endMs)) : ''} · ${doneN} completed visits · ${rows.filter(x => !x.v).length} sites not done</p>${wxSummary(rows)}
+      <div class="tscroll"><table class="t"><thead><tr><th>Route</th><th>#</th><th>Site</th><th>Bill to</th><th>Address(es)</th><th>Visit</th><th>Start</th><th>Complete</th><th>Time on site</th><th>Planned</th><th>Weather at start</th><th>Crew</th><th>Nektar &amp; FLHA</th><th>GPS</th><th>Flags</th></tr></thead><tbody>
+      ${rows.map(({ r, s, v }) => `<tr style="${v ? '' : 'background:var(--warn-bg)'}"><td>${esc(r.label)}</td><td>${s.n}</td><td><b>${esc(s.site.name)}</b></td><td>${esc(s.site.billTo || s.site.owner || '')}</td><td>${addrList(s.site.addresses).map(esc).join('<br>')}</td>
         <td>${v ? v.n || 1 : ''}</td><td>${v ? esc(dayTime(v.startMs)) : ''}</td><td>${v && v.endMs ? esc(dayTime(v.endMs)) : ''}</td><td>${v && v.endMs ? dur(v.endMs - v.startMs) : ''}</td><td>${esc(hrs(s.lo, s.hi))}</td>
         <td>${v && v.weather ? esc(wxText(v.weather)) : ''}</td><td>${v ? esc((v.crew || []).map(first).join(', ')) : ''}</td><td>${v && v.nfMs ? 'Confirmed' : ''}</td>
         <td>${v && v.startGeo ? `<a href="${geoLink(v.startGeo)}" target="_blank" rel="noopener">start</a>` : ''} ${v && v.endGeo ? `<a href="${geoLink(v.endGeo)}" target="_blank" rel="noopener">end</a>` : ''}</td>
@@ -582,8 +592,8 @@ function reports(p) {
   $('#rprint').onclick = () => window.print();
   $('#rcsv').onclick = () => {
     const rows = reportRows(ev, $('#rrt').value), q = x => `"${String(x ?? '').replace(/"/g, '""')}"`;
-    const out = [['Snow event', 'Route', 'Stop #', 'Site', 'Client', 'Address(es)', 'Visit #', 'Start', 'Complete', 'Minutes on site', 'Planned hrs', 'Temp (°C)', 'Condition', 'Wind chill', 'Wind (km/h)', 'Weather station', 'Crew', 'Nektar & FLHA', 'Start GPS', 'Complete GPS', 'Flags'].map(q).join(',')];
-    for (const { r, s, v } of rows) out.push([ev.name, r.label, s.n, s.site.name, s.site.owner, addrList(s.site.addresses).join(' / '), v ? v.n || 1 : '', v ? dayTime(v.startMs) : '', v && v.endMs ? dayTime(v.endMs) : '',
+    const out = [['Snow event', 'Route', 'Stop #', 'Site', 'Client', 'Bill to', 'Address(es)', 'Visit #', 'Start', 'Complete', 'Minutes on site', 'Planned hrs', 'Temp (°C)', 'Condition', 'Wind chill', 'Wind (km/h)', 'Weather station', 'Crew', 'Nektar & FLHA', 'Start GPS', 'Complete GPS', 'Flags'].map(q).join(',')];
+    for (const { r, s, v } of rows) out.push([ev.name, r.label, s.n, s.site.name, s.site.owner, s.site.billTo || s.site.owner || '', addrList(s.site.addresses).join(' / '), v ? v.n || 1 : '', v ? dayTime(v.startMs) : '', v && v.endMs ? dayTime(v.endMs) : '',
       v && v.endMs ? Math.round((v.endMs - v.startMs) / 60000) : '', hrs(s.lo, s.hi),
       ...(w => [w.t ?? '', w.cond || '', w.chill ?? '', w.wind != null ? `${w.dir ? w.dir + ' ' : ''}${w.wind}${w.gust ? ' gust ' + w.gust : ''}` : '', w.place ? 'Env. Canada – ' + w.place : ''])((v && v.weather) || {}),
       v ? (v.crew || []).map(pname).join(', ') : '', v && v.nfMs ? 'Confirmed' : '',
@@ -736,14 +746,18 @@ function archivedHTML() {
     ${arch.map(x => `<div class="stoprow" style="grid-template-columns:minmax(0,1fr) auto"><div><b>${esc(x.label)}</b> <span class="muted small">${esc(PLANS[x.plan].short)} · ${(x.stops || []).length} stops</span></div>
       <div class="row"><button class="btn sm" data-unarch="${esc(x.id)}" type="button">Restore</button>${canDeleteEvents() ? `<button class="btn sm danger" data-delrt="${esc(x.id)}" type="button">Delete for good</button>` : ''}</div></div>`).join('')}</details>`;
 }
-function siteFields(s, st) {
+function siteFields(s, st, noHours) {
   s = s || {}; st = st || {};
   return `<label class="f">Site name</label><input id="sName" value="${esc(s.name || '')}">
     <label class="f">Client / property owner</label><input id="sOwner" value="${esc(s.owner || '')}">
+    <label class="f">Bill to <span class="muted small">(leave blank if it’s the client above)</span></label><input id="sBill" value="${esc(s.billTo || '')}" placeholder="e.g. Gorilla Property Services">
     <label class="f">Address(es), one per line</label><textarea id="sAddr" rows="2">${esc((s.addresses || []).join('\n'))}</textarea>
-    <label class="f">Map pin: paste a Google Maps link from your browser, or “lat, lon”</label><input id="sPin" placeholder="https://www.google.com/maps/place/…" value="${s.lat != null ? `${s.lat}, ${s.lon}` : ''}">
+    <label class="f">Map pin</label>
+    <p class="row" style="margin:0 0 6px"><button class="btn sm" id="sFind" type="button">📍 Find the address on the map</button><button class="btn sm" id="sShow" type="button">${s.lat != null ? 'Show / move the pin' : 'Drop a pin myself'}</button></p>
+    <div id="sMapPrev" class="rmap" style="height:260px" hidden></div><div class="small muted" id="sMapHelp" hidden>Drag the pin, or tap the map, to put it on the exact spot (the entrance crews use).</div>
+    <input id="sPin" placeholder="Or paste a Google Maps link, or “lat, lon”" value="${s.lat != null ? `${s.lat}, ${s.lon}` : ''}" style="margin-top:6px">
     <div class="small muted">Short “maps.app.goo.gl” links can’t be read here: open the link, then copy the long address from the browser bar.</div>
-    <div class="two"><div><label class="f">Planned hrs (this route)</label><input id="sLo" inputmode="decimal" value="${st.lo ?? ''}"></div><div><label class="f">Up to hrs (if a range)</label><input id="sHi" inputmode="decimal" value="${st.hi ?? ''}"></div></div>
+    ${noHours ? '' : `<div class="two"><div><label class="f">Planned hrs (this route)</label><input id="sLo" inputmode="decimal" value="${st.lo ?? ''}"></div><div><label class="f">Up to hrs (if a range)</label><input id="sHi" inputmode="decimal" value="${st.hi ?? ''}"></div></div>`}
     <label class="f">Deadline (shows in red)</label><input id="sDead" value="${esc(s.deadline || '')}" placeholder="e.g. Must be done by 5:00 AM">
     <label class="f">Access: keys, gate or lockbox codes, who to call</label><input id="sAcc" value="${esc(s.access || '')}">
     <label class="f">Snow piles: where to put them, where never to pile</label><input id="sPile" value="${esc(s.piles || '')}">
@@ -755,23 +769,113 @@ function readSite(old) {
   const pin = $('#sPin').value.trim(), ll = pin ? parseLatLon(pin) : null;
   if (pin && !ll) { toast('Couldn’t read that map pin. Paste the long Google Maps link or “lat, lon”.', 'bad'); return null; }
   const name = $('#sName').value.trim(); if (!name) { toast('Site name is needed', 'bad'); return null; }
-  const num = id => { const v = $(id).value.trim(); return v === '' ? null : +v; };
+  const num = id => { const v = $(id) ? $(id).value.trim() : ''; return v === '' ? null : +v; };
   const moved = ll && (!old || old.lat !== ll.lat || old.lon !== ll.lon);
-  return { site: { name, owner: $('#sOwner').value.trim(), addresses: $('#sAddr').value.split('\n').map(x => x.trim()).filter(Boolean),
+  const est = $('#sPin').dataset.est === '1';   // pin came from the address search and wasn't moved by hand
+  return { site: { name, owner: $('#sOwner').value.trim(), billTo: $('#sBill').value.trim(), addresses: $('#sAddr').value.split('\n').map(x => x.trim()).filter(Boolean),
       lat: ll ? ll.lat : (old ? old.lat ?? null : null), lon: ll ? ll.lon : (old ? old.lon ?? null : null), q: moved ? `${ll.lat},${ll.lon}` : (old ? old.q || null : null),
-      pinExact: moved ? true : (old ? old.pinExact !== false : false), deadline: $('#sDead').value.trim(), access: $('#sAcc').value.trim(), piles: $('#sPile').value.trim(),
+      pinExact: moved ? !est : (old ? old.pinExact !== false : false), deadline: $('#sDead').value.trim(), access: $('#sAcc').value.trim(), piles: $('#sPile').value.trim(),
       hazards: $('#sHaz').value.trim(), notes: $('#sNote').value.trim(), mapFile: $('#sMap').value.trim() },
     lo: num('#sLo'), hi: num('#sHi') };
+}
+/* Map pin tools inside any site form: look the address up (OpenStreetMap), then drag the pin to the exact spot. */
+const CAL = { lat: 51.045, lon: -114.06 };
+async function geocode(addr) {
+  const q = encodeURIComponent(/alberta|\bab\b/i.test(addr) ? addr : addr + ', Alberta');
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=ca&viewbox=-115.2,51.6,-112.8,50.5&q=${q}`, { headers: { 'Accept-Language': 'en' } });
+  if (!res.ok) throw new Error('lookup');
+  const r = (await res.json())[0];
+  return r ? { lat: +(+r.lat).toFixed(6), lon: +(+r.lon).toFixed(6) } : null;
+}
+function wirePinTools(d) {
+  const pinIn = $('#sPin', d); if (!pinIn) return;
+  let map = null, mk = null;
+  const setPin = (ll, est) => { pinIn.value = `${ll.lat}, ${ll.lon}`; pinIn.dataset.est = est ? '1' : ''; };
+  const show = async (ll, zoom) => {
+    let L; try { L = await loadLeafletOnce(); } catch (e) { toast('The map needs an internet connection', 'bad'); return; }
+    const box = $('#sMapPrev', d); box.hidden = false; $('#sMapHelp', d).hidden = false;
+    if (!map) {
+      map = L.map(box, { scrollWheelZoom: false });
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+      map.on('click', e => { const p = { lat: +e.latlng.lat.toFixed(6), lon: +e.latlng.lng.toFixed(6) }; place(p); setPin(p, false); });
+    }
+    map.setView([ll.lat, ll.lon], zoom); setTimeout(() => map.invalidateSize(), 60);
+  };
+  const place = ll => {
+    if (mk) mk.setLatLng([ll.lat, ll.lon]);
+    else { mk = window.L.marker([ll.lat, ll.lon], { draggable: true }).addTo(map); mk.on('dragend', () => { const p = mk.getLatLng(); setPin({ lat: +p.lat.toFixed(6), lon: +p.lng.toFixed(6) }, false); }); }
+  };
+  $('#sFind', d).onclick = async () => {
+    const addr = ($('#sAddr', d).value.split('\n').map(x => x.trim()).filter(Boolean)[0]) || '';
+    if (!addr) { toast('Type the address first', 'bad'); return; }
+    const b = $('#sFind', d); b.disabled = true; b.textContent = 'Looking it up…';
+    try {
+      const ll = await geocode(addr);
+      if (!ll) { toast('Couldn’t find that address. Tap the map to drop the pin yourself.', 'bad'); await show(CAL, 11); return; }
+      setPin(ll, true); await show(ll, 17); place(ll);
+      toast('Found it. Check the pin and drag it if it’s off.');
+    } catch (e) { toast('Address lookup isn’t reachable right now. Paste a Google Maps link instead.', 'bad'); }
+    finally { b.disabled = false; b.textContent = '📍 Find the address on the map'; }
+  };
+  $('#sShow', d).onclick = async () => { const ll = parseLatLon(pinIn.value); await show(ll || CAL, ll ? 17 : 11); if (ll) place(ll); };
+}
+/* Jody only: delete a site (e.g. a duplicate). It comes off every route; its past visits are deleted too.
+   Not allowed while a crew is on site there. */
+async function deleteSite(id) {
+  const s = S.sites[id]; if (!s || !canDeleteEvents()) return;
+  try {
+    const vs = await backend.list('visits', [['siteId', '==', id]]);
+    if (vs.some(v => v.status === 'open')) { toast('A crew is on site there right now. Try again once they finish.', 'bad'); return; }
+    const ops = [...S.routes.filter(r => (r.stops || []).some(x => x.siteId === id)).map(r => ({ op: 'update', path: 'routes/' + r.id, data: { stops: r.stops.filter(x => x.siteId !== id) } })),
+      ...vs.map(v => ({ op: 'delete', path: 'visits/' + v.id })), { op: 'delete', path: 'sites/' + id }];
+    for (let i = 0; i < ops.length; i += 400) await backend.batch(ops.slice(i, i + 400));
+    QJ.sites = QJ.sites.filter(x => x !== id);
+    toast('Deleted: ' + s.name);
+  } catch (e) { toast(errText(e), 'bad'); }
+}
+/* Edit a site's details from anywhere (Addresses tab): everything except route hours. */
+function editSite(id) {
+  const s = S.sites[id]; if (!s) return;
+  const on = routesOfSite(id).map(x => PLANS[x.plan].short + ' ' + x.label);
+  const d = dialog('Edit site', `${on.length ? `<p class="small muted">Changes show on: ${esc(on.join(', '))}. Planned hours are set on each route.</p>` : ''}${siteFields(s, null, true)}
+    ${canDeleteEvents() ? '<p class="small muted">“Delete site” removes it from every route and deletes its visit history. For a duplicate, check the copy you’re keeping first.</p>' : ''}`,
+    [{ label: 'Cancel' }, ...(canDeleteEvents() ? [{ label: 'Delete site', cls: 'danger', two: 'Tap again to delete it for good', run: async d => { d.close(); await deleteSite(id); } }] : []), { label: 'Save', cls: 'primary', run: async d => {
+      const v = readSite(s); if (!v) return;
+      try { await backend.set('sites/' + id, v.site, { merge: true }); d.close(); toast('Site saved'); } catch (e) { toast(errText(e), 'bad'); }
+    } }]);
+  wirePinTools(d);
+}
+/* Add an address that isn't on a route yet (or copy one, e.g. the same mall billed to someone else), optionally putting it on a route. */
+function newSite(copyOf) {
+  const c = copyOf ? { ...S.sites[copyOf], name: S.sites[copyOf].name + ' – ', billTo: '' } : null;
+  const rs = S.routes.filter(r => !r.archived && !r.temp && PLANS[r.plan]).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const d = dialog(copyOf ? 'Copy as a new site' : 'Add an address',
+    `${copyOf ? '<p class="small muted">Same address, pin and notes, kept as its own site so its visits and billing stay separate. Give it a name you’ll tell apart (e.g. add who it’s billed to) and fill in Bill to.</p>' : ''}${siteFields(c, null, true)}
+    <label class="f">Put it on a route <span class="muted small">(optional)</span></label><select id="nsRoute"><option value="">Not on a route for now</option>${rs.map(r => `<option value="${esc(r.id)}">${esc(PLANS[r.plan].short)} · ${esc(r.label)}</option>`).join('')}</select>
+    <div class="two" id="nsHrs" hidden><div><label class="f">Planned hrs</label><input id="sLo" inputmode="decimal"></div><div><label class="f">Up to hrs</label><input id="sHi" inputmode="decimal"></div></div>
+    <p class="small muted">It goes at the end of the route; reorder it on Routes &amp; sites.</p>`,
+    [{ label: 'Cancel' }, { label: copyOf ? 'Save copy' : 'Add address', cls: 'primary', run: async d => {
+      const v = readSite(null); if (!v) return;
+      if (copyOf) Object.assign(v.site, { mapFile: v.site.mapFile || S.sites[copyOf].mapFile || '' });
+      if (v.site.lat == null && c && c.lat != null) Object.assign(v.site, { lat: c.lat, lon: c.lon, q: c.q || null, pinExact: c.pinExact });
+      let id = slug(v.site.name) || 'site'; while (S.sites[id]) id += '-2';
+      const ops = [{ op: 'set', path: 'sites/' + id, data: v.site }], rid = $('#nsRoute').value, r = S.routes.find(x => x.id === rid);
+      if (r) ops.push({ op: 'update', path: 'routes/' + r.id, data: { stops: [...(r.stops || []), { siteId: id, lo: v.lo, hi: v.hi ?? v.lo }] } });
+      try { await backend.batch(ops); d.close(); toast(r ? `Added to ${r.label}` : 'Address added'); adFind = v.site.name; if (S.tab === 'sites') drawNow(); } catch (e) { toast(errText(e), 'bad'); }
+    } }]);
+  $('#nsRoute').onchange = () => { $('#nsHrs').hidden = !$('#nsRoute').value; };
+  wirePinTools(d);
 }
 function siteForm(r, i) {
   const st = r.stops[i], s = S.sites[st.siteId];
   const other = S.routes.filter(x => x.id !== r.id && (x.stops || []).some(y => y.siteId === st.siteId)).map(x => PLANS[x.plan].short + ' ' + x.label);
-  dialog('Edit site', `${other.length ? `<p class="small muted">Name, address, pin and notes also change on: ${esc(other.join(', '))}. Hours are for this route only.</p>` : ''}${siteFields(s, st)}`,
+  const sd = dialog('Edit site', `${other.length ? `<p class="small muted">Name, address, pin and notes also change on: ${esc(other.join(', '))}. Hours are for this route only.</p>` : ''}${siteFields(s, st)}`,
     [{ label: 'Cancel' }, { label: 'Save', cls: 'primary', run: async d => {
       const v = readSite(s); if (!v) return;
       const ns = r.stops.slice(); ns[i] = { ...st, lo: v.lo, hi: v.hi ?? v.lo };
       try { await backend.batch([{ op: 'set', path: 'sites/' + st.siteId, data: v.site, merge: true }, { op: 'update', path: 'routes/' + r.id, data: { stops: ns } }]); d.close(); toast('Site saved'); } catch (e) { toast(errText(e), 'bad'); }
     } }]);
+  wirePinTools(sd);
 }
 function addForm(r, after) {
   const used = new Set((r.stops || []).map(s => s.siteId));
@@ -793,6 +897,7 @@ function addForm(r, after) {
       try { await backend.batch(ops); d.close(); toast(r.temp ? 'Site added: crews see it right away' : 'Site added'); if (after) setTimeout(after, 50); } catch (e) { toast(errText(e), 'bad'); }
     } }]);
   $('#aPick').onchange = () => { const n = $('#aPick').value === '__new'; $('#aNew').hidden = !n; $('#aOld').hidden = n; };
+  wirePinTools(d);
   $('#aFind').oninput = () => {
     const w = $('#aFind').value.toLowerCase().split(/\s+/).filter(Boolean); let firstHit = null;
     $$('#aPick option').forEach(o => { if (o.value === '__new') return; const hit = w.every(x => o.textContent.toLowerCase().includes(x)); o.hidden = !hit; if (hit && !firstHit) firstHit = o; });
